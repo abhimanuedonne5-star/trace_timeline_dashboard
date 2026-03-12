@@ -526,4 +526,5 @@ def render_timeline(trace_id, user_id, conv_id):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8050, debug=False)
+    port = int(os.environ.get("DATABRICKS_APP_PORT", 8050))
+    app.run(host="0.0.0.0", port=port, debug=False)
