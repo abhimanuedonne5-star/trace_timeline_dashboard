@@ -805,14 +805,14 @@ def summary_stat(label, value, color=ACCENT):
 
 def summary_table_row(cells, header=False):
     cell_style = dict(
-        padding="8px 14px", fontSize="11px",
+        padding="8px 14px",
+        fontSize="9px" if header else "11px",
         fontFamily="JetBrains Mono, monospace",
         borderBottom=f"1px solid {BORDER}",
         color=MUTED if header else "#94a3b8",
         fontWeight="600" if header else "400",
         letterSpacing="1px" if header else "0",
         textTransform="uppercase" if header else "none",
-        fontSize="9px" if header else "11px",
         whiteSpace="nowrap", overflow="hidden", textOverflow="ellipsis",
     )
     return html.Tr([html.Th(c, style=cell_style) if header
