@@ -6,7 +6,6 @@ from databricks.sdk import WorkspaceClient
 import json
 
 # ── Databricks SDK ─────────────────────────────────────────────────────────────
-# WorkspaceClient() inside a Databricks App uses ambient OAuth — no token needed
 w = WorkspaceClient()
 
 CATALOG      = os.environ.get("CATALOG",      "dev_omni")
@@ -50,7 +49,7 @@ def get_color(comp: str) -> str:
 def build_gantt(df: pd.DataFrame) -> go.Figure:
     if df.empty:
         fig = go.Figure()
-        fig.update_layout(paper_bgcolor="#070810", plot_bgcolor="#070810",
+        fig.update_layout(paper_bgcolor="#05060f", plot_bgcolor="#05060f",
                           font=dict(color="#374151"),
                           annotations=[dict(text="No data", x=0.5, y=0.5,
                                            showarrow=False, font=dict(color="#374151", size=14))])
@@ -59,11 +58,8 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
     df = df.copy()
     df["start_offset_ms"] = pd.to_numeric(df["start_offset_ms"], errors="coerce").fillna(0)
     df["duration_ms"]     = pd.to_numeric(df["duration_ms"],     errors="coerce").fillna(0)
-
-    # Sort by start_time (start_offset_ms asc)
     df = df.sort_values("start_offset_ms").reset_index(drop=True)
-
-    df["component"] = df["component"].fillna(df.get("source","UNKNOWN")).fillna("UNKNOWN")
+    df["component"] = df["component"].fillna(df.get("source", "UNKNOWN")).fillna("UNKNOWN")
     df["operation"] = df["operation"].fillna("")
 
     total_ms = (df["start_offset_ms"] + df["duration_ms"]).max()
@@ -72,17 +68,16 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
 
     for i, row in df.iterrows():
         col     = get_color(row["component"])
-        is_root = str(row.get("operation_type","")).upper() in ("REQUEST_END","PREFILL_LATENCY")
-        bar_h   = 0.20 if is_root else 0.55
-        opacity = 0.25 if is_root else 0.88
+        is_root = str(row.get("operation_type", "")).upper() in ("REQUEST_END", "PREFILL_LATENCY")
+        bar_h   = 0.18 if is_root else 0.42
+        opacity = 0.22 if is_root else 0.85
         show_lg = row["component"] not in seen
         seen.add(row["component"])
 
         dur_fmt   = f"{row['duration_ms']/1000:.3f}s" if row['duration_ms'] >= 1000 else f"{row['duration_ms']:.3f}ms"
         start_fmt = f"{row['start_offset_ms']:.3f}ms"
-        end_fmt   = f"{row['start_offset_ms']+row['duration_ms']:.3f}ms"
+        end_fmt   = f"{row['start_offset_ms'] + row['duration_ms']:.3f}ms"
 
-        # Invisible scatter for hover
         fig.add_trace(go.Scatter(
             x=[row["start_offset_ms"] + row["duration_ms"] / 2],
             y=[i],
@@ -90,98 +85,93 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             marker=dict(size=1, opacity=0, color=col),
             name=row["component"],
             legendgroup=row["component"],
-            showlegend=show_lg,
+            showlegend=False,
             hovertemplate=(
                 f"<b style='color:{col};font-size:13px'>{row['component']}</b>"
                 + (f"<br><span style='color:#6b7280;font-size:11px'>{row['operation']}</span>" if row['operation'] else "")
-                + f"<br><br><span style='color:#475569'>Start  </span><b>{start_fmt}</b>"
-                f"<br><span style='color:#475569'>Duration</span><b>{dur_fmt}</b>"
-                f"<br><span style='color:#475569'>End    </span><b>{end_fmt}</b>"
-                f"<br><span style='color:#475569'>Type   </span><span style='color:#94a3b8'>{row.get('operation_type','')}</span>"
+                + f"<br><br><span style='color:#64748b'>Start   </span><b>{start_fmt}</b>"
+                f"<br><span style='color:#64748b'>Duration</span><b>{dur_fmt}</b>"
+                f"<br><span style='color:#64748b'>End     </span><b>{end_fmt}</b>"
+                f"<br><span style='color:#64748b'>Type    </span><span style='color:#94a3b8'>{row.get('operation_type','')}</span>"
                 "<extra></extra>"
             ),
         ))
 
-        # Bar shape
         min_w = max(row["duration_ms"], total_ms * 0.0008)
         fig.add_shape(
             type="rect",
             x0=row["start_offset_ms"], x1=row["start_offset_ms"] + min_w,
             y0=i - bar_h / 2,         y1=i + bar_h / 2,
             fillcolor=col, opacity=opacity,
-            line=dict(width=0), layer="above",
+            line=dict(color=col, width=1), layer="above",
         )
 
-    n   = len(df)
-    fh  = max(520, n * 40 + 160)
+    n  = len(df)
+    fh = max(560, n * 56 + 180)
 
-    # Y-axis tick: component (bold big) + operation (small muted) as HTML-like annotation
-    # Plotly ticktext supports some HTML via textfont but for two-line we use custom annotations
+    # Two-line tick labels: component (bold) on line 1, operation (muted) on line 2
     tick_labels = []
     for _, row in df.iterrows():
         comp = row["component"]
         op   = row["operation"]
         if op:
-            tick_labels.append(f"<b style='color:#e2e8f0'>{comp}</b>")
+            tick_labels.append(
+                f"<b style='color:#cbd5e1'>{comp}</b>"
+                f"<br><span style='color:#334155;font-size:9px'>{op}</span>"
+            )
         else:
-            tick_labels.append(f"<b>{comp}</b>")
+            tick_labels.append(f"<b style='color:#cbd5e1'>{comp}</b>")
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor="#070810",
-        plot_bgcolor="#0d0f1a",
+        paper_bgcolor="#05060f",
+        plot_bgcolor="#0b0d1a",
         height=fh,
-        margin=dict(l=0, r=28, t=48, b=56),
+        margin=dict(l=240, r=32, t=52, b=60),
         font=dict(family="JetBrains Mono, monospace", size=11, color="#e2e8f0"),
         title=dict(
             text=(
-                f"<span style='color:#334155'>Timeline</span>"
-                f"  <span style='color:#1e3a5f'>|</span>"
-                f"  <span style='color:#00d4ff'>{n} events</span>"
-                f"  <span style='color:#1e3a5f'>|</span>"
-                f"  <span style='color:#475569'>{total_ms:.2f} ms</span>"
+                f"<span style='color:#1e3a5f'>Timeline</span>"
+                f"  <span style='color:#0f2030'>|</span>"
+                f"  <span style='color:#00d4ff;font-weight:700'>{n} events</span>"
+                f"  <span style='color:#0f2030'>|</span>"
+                f"  <span style='color:#334155'>{total_ms:.2f} ms total</span>"
             ),
-            font=dict(size=13), x=0, xref="paper",
+            font=dict(size=12), x=0, xref="paper",
         ),
+        showlegend=False,
         xaxis=dict(
-            title="Offset from first event (ms)",
-            gridcolor="#1c2035", zeroline=False,
-            tickfont=dict(size=10, color="#475569"),
-            title_font=dict(size=10, color="#475569"),
-            rangeslider=dict(visible=True, thickness=0.03, bgcolor="#09090f"),
+            title=dict(text="Offset from first event (ms)",
+                       font=dict(size=10, color="#475569")),
+            gridcolor="#111827", zeroline=True,
+            zerolinecolor="#1e3a5f", zerolinewidth=1,
+            tickfont=dict(size=10, color="#64748b"),
+            tickformat=".2f",
+            ticksuffix=" ms",
+            nticks=12,
+            showgrid=True,
+            showline=True,
+            linecolor="#1a2035",
+            ticks="outside",
+            ticklen=4,
+            tickcolor="#1a2035",
+            rangeslider=dict(visible=True, thickness=0.025, bgcolor="#07080f"),
         ),
         yaxis=dict(
             tickmode="array",
             tickvals=list(range(n)),
             ticktext=tick_labels,
-            tickfont=dict(size=11, color="#cbd5e1"),
-            gridcolor="#111520",
+            tickfont=dict(size=11, color="#94a3b8"),
+            gridcolor="#0d1020",
             autorange="reversed",
-        ),
-        legend=dict(
-            bgcolor="#0a0b12", bordercolor="#1c2035", borderwidth=1,
-            font=dict(size=10, color="#94a3b8"),
-            title=dict(text="Component", font=dict(color="#334155", size=10)),
+            ticklabelposition="outside",
         ),
         hoverlabel=dict(
-            bgcolor="#0d1117", bordercolor="#1e293b",
+            bgcolor="#0a0c18", bordercolor="#1e293b",
             font=dict(family="JetBrains Mono, monospace", size=11),
         ),
         dragmode="zoom",
     )
-
-    # Add operation name as annotation (small, muted) next to each bar
-    for i, row in df.iterrows():
-        if row["operation"]:
-            fig.add_annotation(
-                x=0, y=i,
-                xref="paper", yref="y",
-                text=f"<span style='color:#475569;font-size:9px'> {row['operation']}</span>",
-                showarrow=False,
-                xanchor="right", yanchor="middle",
-                font=dict(size=9, color="#475569",
-                          family="JetBrains Mono, monospace"),
-            )
 
     return fig
 
@@ -189,33 +179,49 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
 # ── App ────────────────────────────────────────────────────────────────────────
 app = Dash(__name__, title="Trace Timeline", suppress_callback_exceptions=True)
 
-# ── Styles ─────────────────────────────────────────────────────────────────────
-BG      = "#070810"
-SURFACE = "#0d0f1a"
-BORDER  = "#1c2035"
+# ── Design tokens ──────────────────────────────────────────────────────────────
+BG      = "#05060f"
+SURFACE = "#0b0d1a"
+SURFACE2= "#0f1120"
+BORDER  = "#1a2035"
 TEXT    = "#e2e8f0"
 MUTED   = "#475569"
+DIM     = "#1e3a5f"
 ACCENT  = "#00d4ff"
+PURPLE  = "#a78bfa"
+GREEN   = "#34d399"
 
-LABEL_S = dict(fontSize="9px", fontFamily="JetBrains Mono, monospace",
-               letterSpacing="2px", textTransform="uppercase",
-               color=MUTED, marginBottom="6px", display="block")
+LABEL_S = dict(
+    fontSize="9px", fontFamily="JetBrains Mono, monospace",
+    letterSpacing="2px", textTransform="uppercase",
+    color=MUTED, marginBottom="5px", display="block",
+)
 
-DD_S = dict(backgroundColor=SURFACE, color=TEXT,
-            border=f"1px solid #1e2a3a", borderRadius="6px",
-            fontFamily="JetBrains Mono, monospace", fontSize="12px")
+DD_S = dict(
+    backgroundColor=SURFACE2, color=TEXT,
+    border=f"1px solid {BORDER}", borderRadius="6px",
+    fontFamily="JetBrains Mono, monospace", fontSize="12px",
+)
 
-def stat_card(label, sid):
+
+def stat_card(label, sid, accent_color=ACCENT):
     return html.Div([
-        html.Span(label, style=dict(fontSize="9px", color=MUTED, letterSpacing="2px",
-                                    textTransform="uppercase",
-                                    fontFamily="JetBrains Mono, monospace",
-                                    display="block", marginBottom="4px")),
-        html.Span("—", id=sid, style=dict(fontSize="18px", fontWeight="700",
-                                          color=ACCENT,
-                                          fontFamily="JetBrains Mono, monospace")),
-    ], style=dict(background=SURFACE, border=f"1px solid {BORDER}",
-                  borderRadius="6px", padding="12px 18px", minWidth="120px"))
+        html.Span(label, style=dict(
+            fontSize="9px", color=MUTED, letterSpacing="2px",
+            textTransform="uppercase", fontFamily="JetBrains Mono, monospace",
+            display="block", marginBottom="6px",
+        )),
+        html.Span("—", id=sid, style=dict(
+            fontSize="20px", fontWeight="700",
+            color=accent_color,
+            fontFamily="JetBrains Mono, monospace",
+        )),
+    ], style=dict(
+        background=SURFACE2, border=f"1px solid {BORDER}",
+        borderRadius="8px", padding="14px 20px", minWidth="130px",
+        boxShadow=f"0 0 12px {accent_color}08",
+    ))
+
 
 # ── Tree node builders ─────────────────────────────────────────────────────────
 def user_node(uid, expanded=False):
@@ -223,24 +229,30 @@ def user_node(uid, expanded=False):
         html.Div(
             id={"type": "user-row", "id": uid},
             n_clicks=0,
-            style=dict(display="flex", alignItems="center", gap="8px",
-                       padding="7px 10px", cursor="pointer", borderRadius="5px",
-                       background="transparent", userSelect="none"),
+            style=dict(
+                display="flex", alignItems="center", gap="8px",
+                padding="8px 10px", cursor="pointer", borderRadius="6px",
+                background="transparent", userSelect="none",
+                transition="background .12s",
+            ),
             children=[
-                html.Span("▶" if not expanded else "▼",
+                html.Span("▼" if expanded else "▶",
                           id={"type": "user-arrow", "id": uid},
-                          style=dict(color=ACCENT, fontSize="9px",
-                                     transition="transform .15s", minWidth="10px")),
+                          style=dict(color=ACCENT, fontSize="8px",
+                                     minWidth="10px", transition="transform .15s")),
                 html.Span("👤", style=dict(fontSize="13px")),
-                html.Span(uid, style=dict(fontSize="12px", fontWeight="700",
-                                          color="#cbd5e1",
-                                          fontFamily="JetBrains Mono, monospace")),
+                html.Span(uid, style=dict(
+                    fontSize="12px", fontWeight="700", color="#cbd5e1",
+                    fontFamily="JetBrains Mono, monospace",
+                    overflow="hidden", textOverflow="ellipsis", whiteSpace="nowrap",
+                )),
             ],
         ),
-        html.Div(id={"type": "user-children", "id": uid},
-                 style=dict(display="block" if expanded else "none",
-                            paddingLeft="22px")),
-    ], style=dict(borderBottom=f"1px solid {BORDER}10"))
+        html.Div(
+            id={"type": "user-children", "id": uid},
+            style=dict(display="block" if expanded else "none", paddingLeft="18px"),
+        ),
+    ], style=dict(borderBottom=f"1px solid {BORDER}18", marginBottom="1px"))
 
 
 def conv_node(uid, cid, expanded=False):
@@ -248,22 +260,27 @@ def conv_node(uid, cid, expanded=False):
         html.Div(
             id={"type": "conv-row", "id": f"{uid}||{cid}"},
             n_clicks=0,
-            style=dict(display="flex", alignItems="center", gap="8px",
-                       padding="6px 10px", cursor="pointer", borderRadius="5px",
-                       userSelect="none"),
+            style=dict(
+                display="flex", alignItems="center", gap="8px",
+                padding="6px 10px", cursor="pointer", borderRadius="6px",
+                userSelect="none", transition="background .12s",
+            ),
             children=[
-                html.Span("▶" if not expanded else "▼",
+                html.Span("▼" if expanded else "▶",
                           id={"type": "conv-arrow", "id": f"{uid}||{cid}"},
-                          style=dict(color="#a78bfa", fontSize="9px", minWidth="10px")),
-                html.Span("💬", style=dict(fontSize="12px")),
-                html.Span(cid, style=dict(fontSize="11px", fontWeight="600",
-                                          color="#94a3b8",
-                                          fontFamily="JetBrains Mono, monospace")),
+                          style=dict(color=PURPLE, fontSize="8px", minWidth="10px")),
+                html.Span("💬", style=dict(fontSize="11px")),
+                html.Span(cid, style=dict(
+                    fontSize="11px", fontWeight="600", color="#7c8db5",
+                    fontFamily="JetBrains Mono, monospace",
+                    overflow="hidden", textOverflow="ellipsis", whiteSpace="nowrap",
+                )),
             ],
         ),
-        html.Div(id={"type": "conv-children", "id": f"{uid}||{cid}"},
-                 style=dict(display="block" if expanded else "none",
-                            paddingLeft="22px")),
+        html.Div(
+            id={"type": "conv-children", "id": f"{uid}||{cid}"},
+            style=dict(display="block" if expanded else "none", paddingLeft="18px"),
+        ),
     ])
 
 
@@ -271,25 +288,31 @@ def trace_node(uid, cid, tid, event_count=None, total_ms=None):
     label_extra = ""
     if event_count is not None:
         ms_str = f"{float(total_ms)/1000:.2f}s" if float(total_ms) >= 1000 else f"{float(total_ms):.0f}ms"
-        label_extra = f"  {int(float(event_count))} evt · {ms_str}"
+        label_extra = f"{int(float(event_count))} evt · {ms_str}"
     return html.Div(
         id={"type": "trace-row", "id": f"{uid}||{cid}||{tid}"},
         n_clicks=0,
-        style=dict(display="flex", alignItems="center", gap="8px",
-                   padding="5px 10px", cursor="pointer", borderRadius="5px",
-                   userSelect="none"),
+        style=dict(
+            display="flex", alignItems="flex-start", gap="8px",
+            padding="6px 10px", cursor="pointer", borderRadius="6px",
+            userSelect="none", transition="background .12s",
+        ),
         children=[
-            html.Span("⬡", style=dict(color="#34d399", fontSize="10px", minWidth="10px")),
-            html.Span("🔍", style=dict(fontSize="11px")),
+            html.Span("◈", style=dict(color=GREEN, fontSize="9px",
+                                      minWidth="10px", marginTop="2px")),
             html.Div([
-                html.Span(tid[:40] + ("…" if len(tid) > 40 else ""),
-                          style=dict(fontSize="10px", fontWeight="600",
-                                     color="#64748b",
-                                     fontFamily="JetBrains Mono, monospace",
-                                     display="block")),
-                html.Span(label_extra,
-                          style=dict(fontSize="9px", color="#334155",
-                                     fontFamily="JetBrains Mono, monospace")),
+                html.Span(
+                    tid[:36] + ("…" if len(tid) > 36 else ""),
+                    style=dict(
+                        fontSize="10px", fontWeight="600", color="#4a5568",
+                        fontFamily="JetBrains Mono, monospace",
+                        display="block", lineHeight="1.4",
+                    ),
+                ),
+                html.Span(label_extra, style=dict(
+                    fontSize="9px", color="#2d3f5a",
+                    fontFamily="JetBrains Mono, monospace",
+                )),
             ]),
         ],
     )
@@ -300,67 +323,96 @@ app.layout = html.Div(
     style=dict(background=BG, minHeight="100vh",
                fontFamily="JetBrains Mono, monospace", color=TEXT),
     children=[
-        html.Link(rel="stylesheet",
-                  href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Syne:wght@700;800&display=swap"),
+        html.Link(
+            rel="stylesheet",
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@700;800&display=swap",
+        ),
 
         # ── Top bar ────────────────────────────────────────────────────────────
         html.Div([
-            html.H1("Trace Execution Timeline",
-                    style=dict(fontFamily="'Syne', sans-serif", fontSize="22px",
-                               fontWeight="800", color=TEXT, margin="0 0 2px 0")),
-            html.Span("User  →  Conversation  →  Trace  →  Timeline",
-                      style=dict(fontSize="9px", color="#334155",
-                                 letterSpacing="3px", textTransform="uppercase")),
-        ], style=dict(padding="22px 28px 18px", borderBottom=f"1px solid {BORDER}")),
+            html.Div([
+                html.H1("Trace Execution Timeline", style=dict(
+                    fontFamily="'Syne', sans-serif", fontSize="20px",
+                    fontWeight="800", color=TEXT, margin="0 0 2px 0",
+                    letterSpacing="-0.3px",
+                )),
+                html.Span("User  →  Conversation  →  Trace  →  Timeline", style=dict(
+                    fontSize="9px", color=DIM, letterSpacing="3px",
+                    textTransform="uppercase",
+                )),
+            ]),
+        ], style=dict(
+            padding="18px 28px 16px",
+            borderBottom=f"1px solid {BORDER}",
+            background=SURFACE,
+        )),
+
+        # ── Filter bar (full width, side by side) ──────────────────────────────
+        html.Div([
+            html.Div([
+                html.Label("User ID", style=LABEL_S),
+                dcc.Dropdown(
+                    id="f-user", placeholder="Any user…",
+                    clearable=True, style=DD_S, className="dark-dd",
+                    optionHeight=32,
+                ),
+            ], style=dict(flex="1", minWidth="180px")),
+
+            html.Div([
+                html.Label("Conversation ID", style=LABEL_S),
+                dcc.Dropdown(
+                    id="f-conv", placeholder="Any conversation…",
+                    clearable=True, style=DD_S, className="dark-dd",
+                    optionHeight=32,
+                ),
+            ], style=dict(flex="1", minWidth="180px")),
+
+            html.Div([
+                html.Label("Trace ID", style=LABEL_S),
+                dcc.Dropdown(
+                    id="f-trace", placeholder="Any trace…",
+                    clearable=True, style=DD_S, className="dark-dd",
+                    optionHeight=32,
+                ),
+            ], style=dict(flex="2", minWidth="220px")),
+        ], style=dict(
+            display="flex", gap="16px", padding="14px 28px",
+            borderBottom=f"1px solid {BORDER}",
+            background=SURFACE, alignItems="flex-end",
+        )),
 
         # ── Main layout: sidebar + content ─────────────────────────────────────
         html.Div([
 
-            # ── LEFT: Filter bar + Tree ────────────────────────────────────────
+            # ── LEFT: Explorer tree ────────────────────────────────────────────
             html.Div([
-
-                # Independent filters
                 html.Div([
-                    html.Div("Quick Filters", style=dict(
-                        fontSize="9px", color=MUTED, letterSpacing="2px",
-                        textTransform="uppercase", marginBottom="12px",
-                        paddingBottom="8px", borderBottom=f"1px solid {BORDER}",
+                    html.Div("◈", style=dict(
+                        fontSize="8px", color=GREEN, display="inline",
+                        marginRight="6px",
                     )),
-
-                    html.Label("User ID", style=LABEL_S),
-                    dcc.Dropdown(id="f-user", placeholder="Any user…",
-                                 clearable=True, style=DD_S, className="dark-dd",
-                                 optionHeight=32),
-                    html.Div(style=dict(height="10px")),
-
-                    html.Label("Conversation ID", style=LABEL_S),
-                    dcc.Dropdown(id="f-conv", placeholder="Any conversation…",
-                                 clearable=True, style=DD_S, className="dark-dd",
-                                 optionHeight=32),
-                    html.Div(style=dict(height="10px")),
-
-                    html.Label("Trace ID", style=LABEL_S),
-                    dcc.Dropdown(id="f-trace", placeholder="Any trace…",
-                                 clearable=True, style=DD_S, className="dark-dd",
-                                 optionHeight=32),
-                ], style=dict(padding="14px 14px 16px",
-                               borderBottom=f"1px solid {BORDER}")),
-
-                # Tree header
-                html.Div([
-                    html.Div("Explorer", style=dict(
+                    html.Span("Explorer", style=dict(
                         fontSize="9px", color=MUTED, letterSpacing="2px",
-                        textTransform="uppercase", marginBottom="10px",
+                        textTransform="uppercase",
                     )),
-                    html.Div(id="tree-root",
-                             style=dict(overflowY="auto", maxHeight="calc(100vh - 360px)")),
-                ], style=dict(padding="14px 10px 10px")),
-
+                ], style=dict(
+                    padding="14px 14px 10px",
+                    borderBottom=f"1px solid {BORDER}",
+                    marginBottom="4px",
+                )),
+                html.Div(
+                    id="tree-root",
+                    style=dict(
+                        overflowY="auto",
+                        maxHeight="calc(100vh - 190px)",
+                        padding="4px 6px 10px",
+                    ),
+                ),
             ], style=dict(
-                width="300px", minWidth="300px",
+                width="280px", minWidth="280px",
                 background=SURFACE, borderRight=f"1px solid {BORDER}",
                 display="flex", flexDirection="column",
-                height="calc(100vh - 60px)", overflowY="auto",
+                height="calc(100vh - 120px)",
             )),
 
             # ── RIGHT: Timeline ────────────────────────────────────────────────
@@ -368,51 +420,64 @@ app.layout = html.Div(
 
                 # Breadcrumb
                 html.Div(id="breadcrumb", style=dict(
-                    padding="10px 24px", borderBottom=f"1px solid {BORDER}",
-                    fontSize="10px", color=MUTED, minHeight="36px",
+                    padding="9px 24px", borderBottom=f"1px solid {BORDER}",
+                    fontSize="10px", color=MUTED, minHeight="34px",
                     display="flex", alignItems="center", gap="6px",
                     fontFamily="JetBrains Mono, monospace",
+                    background=SURFACE,
                 )),
 
                 # Stat cards
                 html.Div([
-                    stat_card("Events",   "st-events"),
-                    stat_card("Duration", "st-dur"),
-                    stat_card("Components", "st-comps"),
-                    stat_card("Slowest",  "st-slow"),
+                    stat_card("Events",     "st-events", ACCENT),
+                    stat_card("Duration",   "st-dur",    PURPLE),
+                    stat_card("Components", "st-comps",  GREEN),
+                    stat_card("Slowest",    "st-slow",   "#fbbf24"),
                 ], id="stat-row",
-                   style=dict(display="none", gap="10px", padding="14px 24px",
-                              flexWrap="wrap", borderBottom=f"1px solid {BORDER}")),
+                   style=dict(display="none", gap="12px", padding="14px 24px",
+                              flexWrap="wrap", borderBottom=f"1px solid {BORDER}",
+                              background=SURFACE2)),
 
                 # Chart / empty state
-                html.Div(id="chart-area",
-                         style=dict(padding="20px 24px", flex="1"),
-                         children=html.Div([
-                             html.Div("◎", style=dict(
-                                 fontSize="40px", color="#1e3a5f",
-                                 textAlign="center", marginBottom="14px")),
-                             html.P("Click a Trace ID in the explorer to render its timeline",
-                                    style=dict(color="#1e3a5f", fontSize="11px",
-                                               textAlign="center",
-                                               fontFamily="JetBrains Mono, monospace",
-                                               letterSpacing="1px")),
-                         ], style=dict(paddingTop="80px"))),
+                html.Div(
+                    id="chart-area",
+                    style=dict(padding="20px 24px", flex="1", overflowY="auto"),
+                    children=html.Div([
+                        html.Div("◎", style=dict(
+                            fontSize="44px", color=DIM,
+                            textAlign="center", marginBottom="16px",
+                        )),
+                        html.P(
+                            "Click a Trace ID in the explorer to render its timeline",
+                            style=dict(
+                                color=DIM, fontSize="11px", textAlign="center",
+                                fontFamily="JetBrains Mono, monospace",
+                                letterSpacing="1px",
+                            ),
+                        ),
+                    ], style=dict(paddingTop="100px")),
+                ),
 
-            ], style=dict(flex="1", display="flex", flexDirection="column",
-                          overflow="hidden")),
+            ], style=dict(
+                flex="1", display="flex", flexDirection="column",
+                overflow="hidden",
+            )),
 
-        ], style=dict(display="flex", height="calc(100vh - 60px)")),
+        ], style=dict(
+            display="flex",
+            height="calc(100vh - 120px)",
+        )),
 
         # Stores
-        dcc.Store(id="store-active-trace", data={}),   # {uid, cid, tid}
-        dcc.Store(id="store-expanded",     data={}),   # {uid: bool, uid||cid: bool}
+        dcc.Store(id="store-active-trace", data={}),
+        dcc.Store(id="store-expanded",     data={}),
     ]
 )
 
 
 # ── CALLBACKS ──────────────────────────────────────────────────────────────────
 
-# 1. Load all filter dropdowns independently on startup
+# 1. Load all filter dropdowns on startup
 @app.callback(
     Output("f-user",  "options"),
     Output("f-conv",  "options"),
@@ -421,8 +486,8 @@ app.layout = html.Div(
 )
 def load_all_filters(_):
     try:
-        users = run_query(f"SELECT DISTINCT user_id FROM {FULL_TABLE} WHERE user_id IS NOT NULL ORDER BY user_id")
-        convs = run_query(f"SELECT DISTINCT conversation_id FROM {FULL_TABLE} WHERE conversation_id IS NOT NULL ORDER BY conversation_id")
+        users  = run_query(f"SELECT DISTINCT user_id FROM {FULL_TABLE} WHERE user_id IS NOT NULL ORDER BY user_id")
+        convs  = run_query(f"SELECT DISTINCT conversation_id FROM {FULL_TABLE} WHERE conversation_id IS NOT NULL ORDER BY conversation_id")
         traces = run_query(f"SELECT DISTINCT trace_id FROM {FULL_TABLE} WHERE trace_id IS NOT NULL ORDER BY trace_id")
         u_opts = [{"label": v, "value": v} for v in users["user_id"].tolist()]
         c_opts = [{"label": v, "value": v} for v in convs["conversation_id"].tolist()]
@@ -435,16 +500,16 @@ def load_all_filters(_):
 
 # 2. Build / rebuild the tree when filters change or nodes are expanded
 @app.callback(
-    Output("tree-root",     "children"),
-    Output("store-expanded","data"),
-    Input("f-user",         "value"),
-    Input("f-conv",         "value"),
-    Input("f-trace",        "value"),
-    Input({"type": "user-row",  "id": ALL}, "n_clicks"),
-    Input({"type": "conv-row",  "id": ALL}, "n_clicks"),
-    State({"type": "user-row",  "id": ALL}, "id"),
-    State({"type": "conv-row",  "id": ALL}, "id"),
-    State("store-expanded", "data"),
+    Output("tree-root",      "children"),
+    Output("store-expanded", "data"),
+    Input("f-user",          "value"),
+    Input("f-conv",          "value"),
+    Input("f-trace",         "value"),
+    Input({"type": "user-row", "id": ALL}, "n_clicks"),
+    Input({"type": "conv-row", "id": ALL}, "n_clicks"),
+    State({"type": "user-row", "id": ALL}, "id"),
+    State({"type": "conv-row", "id": ALL}, "id"),
+    State("store-expanded",  "data"),
     prevent_initial_call=False,
 )
 def build_tree(f_user, f_conv, f_trace,
@@ -454,7 +519,6 @@ def build_tree(f_user, f_conv, f_trace,
     ctx = callback_context
     expanded = expanded or {}
 
-    # Toggle expanded state from clicks
     if ctx.triggered:
         for t in ctx.triggered:
             tid = t["prop_id"]
@@ -466,7 +530,6 @@ def build_tree(f_user, f_conv, f_trace,
                 expanded[key] = not expanded.get(key, False)
 
     try:
-        # Build WHERE clause from filters
         where_parts = ["1=1"]
         if f_user:  where_parts.append(f"user_id = '{f_user}'")
         if f_conv:  where_parts.append(f"conversation_id = '{f_conv}'")
@@ -481,8 +544,8 @@ def build_tree(f_user, f_conv, f_trace,
 
         tree = []
         for _, ur in users_df.iterrows():
-            uid      = ur["user_id"]
-            u_exp    = expanded.get(uid, False)
+            uid     = ur["user_id"]
+            u_exp   = expanded.get(uid, False)
             u_children = []
 
             if u_exp:
@@ -519,7 +582,6 @@ def build_tree(f_user, f_conv, f_trace,
                             )
 
                     u_children.append(conv_node(uid, cid, expanded=c_exp))
-                    # Inject children into conv node (last added)
                     if c_children:
                         u_children[-1].children[1].children = c_children
 
@@ -533,10 +595,10 @@ def build_tree(f_user, f_conv, f_trace,
     except Exception as e:
         print(f"[build_tree] {e}")
         return [html.P(str(e), style=dict(color="#ef4444", fontSize="10px",
-                                          padding="10px"))], expanded
+                                          padding="10px", fontFamily="JetBrains Mono, monospace"))], expanded
 
 
-# 3. Handle trace click → render timeline
+# 3. Handle trace click → store active trace
 @app.callback(
     Output("store-active-trace", "data"),
     Input({"type": "trace-row", "id": ALL}, "n_clicks"),
@@ -556,7 +618,7 @@ def set_active_trace(clicks, ids):
     return {}
 
 
-# 4. Also handle filter → trace dropdown direct selection
+# 4. Handle filter trace dropdown → store active trace
 @app.callback(
     Output("store-active-trace", "data", allow_duplicate=True),
     Input("f-trace", "value"),
@@ -596,16 +658,16 @@ def set_trace_from_filter(trace_id):
     Input("store-active-trace", "data"),
 )
 def render_timeline(active):
-    hidden  = dict(display="none")
-    blank   = ("—","—","—","—")
-    empty_bc = html.Span("Select a trace to begin", style=dict(color="#1e3a5f"))
+    hidden   = dict(display="none")
+    blank    = ("—", "—", "—", "—")
+    empty_bc = html.Span("Select a trace to begin", style=dict(color=DIM))
     placeholder = html.Div([
-        html.Div("◎", style=dict(fontSize="40px", color="#1e3a5f",
-                                  textAlign="center", marginBottom="14px")),
+        html.Div("◎", style=dict(fontSize="44px", color=DIM,
+                                  textAlign="center", marginBottom="16px")),
         html.P("Click a Trace ID in the explorer to render its timeline",
-               style=dict(color="#1e3a5f", fontSize="11px", textAlign="center",
+               style=dict(color=DIM, fontSize="11px", textAlign="center",
                            fontFamily="JetBrains Mono, monospace", letterSpacing="1px")),
-    ], style=dict(paddingTop="80px"))
+    ], style=dict(paddingTop="100px"))
 
     if not active or not active.get("tid"):
         return placeholder, hidden, *blank, empty_bc
@@ -626,7 +688,7 @@ def render_timeline(active):
                         - MIN(UNIX_MICROS(timestamp) - CAST(duration_ms * 1000 AS BIGINT))
                             OVER (PARTITION BY trace_id)
                     )
-                AS DOUBLE) / 1000.0         AS start_offset_ms
+                AS DOUBLE) / 1000.0 AS start_offset_ms
             FROM {FULL_TABLE}
             WHERE trace_id        = '{tid}'
               AND user_id         = '{uid}'
@@ -650,24 +712,25 @@ def render_timeline(active):
         def fmt(ms):
             return f"{ms/1000:.3f}s" if ms >= 1000 else f"{ms:.2f}ms"
 
-        # Breadcrumb
         bc = [
             html.Span("👤", style=dict(marginRight="4px")),
-            html.Span(uid,  style=dict(color="#64748b")),
-            html.Span(" → ", style=dict(color="#1e3a5f")),
+            html.Span(uid,  style=dict(color="#4a5568")),
+            html.Span(" → ", style=dict(color=DIM)),
             html.Span("💬", style=dict(marginRight="4px")),
-            html.Span(cid,  style=dict(color="#64748b")),
-            html.Span(" → ", style=dict(color="#1e3a5f")),
+            html.Span(cid,  style=dict(color="#4a5568")),
+            html.Span(" → ", style=dict(color=DIM)),
             html.Span("🔍", style=dict(marginRight="4px")),
-            html.Span(tid[:48] + ("…" if len(tid) > 48 else ""),
-                      style=dict(color=ACCENT, fontWeight="700")),
+            html.Span(
+                tid[:48] + ("…" if len(tid) > 48 else ""),
+                style=dict(color=ACCENT, fontWeight="700"),
+            ),
         ]
 
         chart = dcc.Graph(
             figure=fig,
             config=dict(
                 displayModeBar=True,
-                modeBarButtonsToRemove=["select2d","lasso2d"],
+                modeBarButtonsToRemove=["select2d", "lasso2d"],
                 displaylogo=False,
                 toImageButtonOptions=dict(format="png",
                                           filename="trace_timeline", scale=2),
@@ -677,8 +740,9 @@ def render_timeline(active):
 
         return (
             chart,
-            dict(display="flex", gap="10px", padding="14px 24px",
-                 flexWrap="wrap", borderBottom=f"1px solid {BORDER}"),
+            dict(display="flex", gap="12px", padding="14px 24px",
+                 flexWrap="wrap", borderBottom=f"1px solid {BORDER}",
+                 background=SURFACE2),
             str(len(df)),
             fmt(total_ms),
             str(n_comps),
@@ -689,8 +753,9 @@ def render_timeline(active):
     except Exception as e:
         print(f"[render_timeline] {e}")
         err = html.Div([
-            html.P("⚠ Error", style=dict(color="#ef4444", fontWeight="700")),
-            html.Pre(str(e), style=dict(color="#6b7280", fontSize="10px",
+            html.P("⚠ Error", style=dict(color="#ef4444", fontWeight="700",
+                                          marginBottom="8px")),
+            html.Pre(str(e), style=dict(color="#475569", fontSize="10px",
                                         whiteSpace="pre-wrap")),
         ], style=dict(padding="24px", fontFamily="JetBrains Mono, monospace"))
         return err, hidden, *blank, empty_bc
