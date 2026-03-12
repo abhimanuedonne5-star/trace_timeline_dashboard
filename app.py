@@ -639,6 +639,9 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
     if filter_changed:
         cache    = {}
         expanded = {}
+        # Auto-expand the selected user so their conversations are visible immediately
+        if f_user:
+            expanded[f_user] = True
 
     # Toggle the clicked node
     if ctx.triggered:
