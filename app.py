@@ -165,7 +165,6 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             gridcolor="#0d1020",
             autorange="reversed",
             automargin=True,
-            ticklabelstandoff=8,
         ),
         hoverlabel=dict(
             bgcolor="#0a0c18", bordercolor="#1e293b",
@@ -377,7 +376,7 @@ app.layout = html.Div(
                     clearable=True, style=DD_S, className="dark-dd",
                     optionHeight=32,
                 ),
-            ], style=dict(flex="2", minWidth="200px")),
+            ], style=dict(flex="1", minWidth="150px")),
         ], style=dict(
             display="flex", alignItems="center", gap="14px",
             padding="10px 20px",
