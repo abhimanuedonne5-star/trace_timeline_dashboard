@@ -16,6 +16,13 @@ WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "2a6b5b84e8974695")
 FULL_TABLE = f"`{CATALOG}`.`{SCHEMA}`.`{TABLE}`"
 
 
+def fmt_ts(ts: str) -> str:
+    """Normalise datetime-local input ('2024-01-15T10:30') to SQL timestamp string."""
+    if not ts:
+        return ""
+    return ts.replace("T", " ") + (":00" if ts.count(":") == 1 else "")
+
+
 def run_query(sql: str) -> pd.DataFrame:
     resp = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
@@ -394,6 +401,50 @@ app.layout = html.Div(
 
             # ── LEFT: Explorer tree ────────────────────────────────────────────
             html.Div([
+
+                # Time range filters
+                html.Div([
+                    html.Div([
+                        html.Span("⏱", style=dict(fontSize="9px", marginRight="5px",
+                                                   color=ACCENT)),
+                        html.Span("Time Range", style=dict(
+                            fontSize="9px", color=MUTED, letterSpacing="2px",
+                            textTransform="uppercase",
+                        )),
+                    ], style=dict(marginBottom="10px")),
+
+                    html.Label("From", style=LABEL_S),
+                    dcc.Input(
+                        id="f-from", type="datetime-local",
+                        debounce=True, className="ts-input",
+                        style=dict(
+                            width="100%", background=SURFACE2, color=TEXT,
+                            border=f"1px solid {BORDER}", borderRadius="6px",
+                            padding="5px 8px", fontSize="11px",
+                            fontFamily="JetBrains Mono, monospace",
+                            marginBottom="8px", display="block",
+                        ),
+                    ),
+
+                    html.Label("To", style=LABEL_S),
+                    dcc.Input(
+                        id="f-to", type="datetime-local",
+                        debounce=True, className="ts-input",
+                        style=dict(
+                            width="100%", background=SURFACE2, color=TEXT,
+                            border=f"1px solid {BORDER}", borderRadius="6px",
+                            padding="5px 8px", fontSize="11px",
+                            fontFamily="JetBrains Mono, monospace",
+                            display="block",
+                        ),
+                    ),
+                ], style=dict(
+                    padding="10px 12px 12px",
+                    borderBottom=f"1px solid {BORDER}",
+                    flexShrink="0",
+                )),
+
+                # Explorer header + tree
                 html.Div([
                     html.Span("◈", style=dict(fontSize="8px", color=GREEN,
                                               marginRight="6px")),
@@ -521,6 +572,8 @@ def load_all_filters(_):
     Input("f-user",            "value"),
     Input("f-conv",            "value"),
     Input("f-trace",           "value"),
+    Input("f-from",            "value"),
+    Input("f-to",              "value"),
     Input({"type": "user-row", "id": ALL}, "n_clicks"),
     Input({"type": "conv-row", "id": ALL}, "n_clicks"),
     State({"type": "user-row", "id": ALL}, "id"),
@@ -529,7 +582,7 @@ def load_all_filters(_):
     State("store-tree-cache",  "data"),
     prevent_initial_call=False,
 )
-def build_tree(f_user, f_conv, f_trace,
+def build_tree(f_user, f_conv, f_trace, f_from, f_to,
                user_clicks, conv_clicks,
                user_ids, conv_ids,
                expanded, cache):
@@ -559,6 +612,8 @@ def build_tree(f_user, f_conv, f_trace,
     if f_user:  where_parts.append(f"user_id = '{f_user}'")
     if f_conv:  where_parts.append(f"conversation_id = '{f_conv}'")
     if f_trace: where_parts.append(f"trace_id = '{f_trace}'")
+    if f_from:  where_parts.append(f"timestamp >= CAST('{fmt_ts(f_from)}' AS TIMESTAMP)")
+    if f_to:    where_parts.append(f"timestamp <= CAST('{fmt_ts(f_to)}' AS TIMESTAMP)")
     where = " AND ".join(where_parts)
 
     # ── Fetch users (cached) ──────────────────────────────────────────────────
@@ -700,8 +755,10 @@ def set_trace_from_filter(trace_id):
     Output("st-slow",     "children"),
     Output("breadcrumb",  "children"),
     Input("store-active-trace", "data"),
+    State("f-from", "value"),
+    State("f-to",   "value"),
 )
-def render_timeline(active):
+def render_timeline(active, f_from, f_to):
     hidden   = dict(display="none")
     blank    = ("—", "—", "—", "—")
     empty_bc = html.Span("Select a trace to begin", style=dict(color=DIM))
@@ -737,6 +794,8 @@ def render_timeline(active):
             WHERE trace_id        = '{tid}'
               AND user_id         = '{uid}'
               AND conversation_id = '{cid}'
+              {"AND timestamp >= CAST('" + fmt_ts(f_from) + "' AS TIMESTAMP)" if f_from else ""}
+              {"AND timestamp <= CAST('" + fmt_ts(f_to)   + "' AS TIMESTAMP)" if f_to   else ""}
             ORDER BY start_offset_ms ASC
         """)
 

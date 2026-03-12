@@ -123,6 +123,19 @@ body { margin: 0; background: #05060f; overflow: hidden; }
   background: #00d4ff80;
 }
 
+/* ── Timestamp datetime-local inputs ── */
+.ts-input {
+  color-scheme: dark;
+}
+.ts-input:hover {
+  border-color: #00d4ff50 !important;
+}
+.ts-input:focus {
+  border-color: #00d4ff !important;
+  box-shadow: 0 0 0 2px #00d4ff18 !important;
+  outline: none;
+}
+
 /* ── Plotly chart ── */
 .js-plotly-plot .plotly,
 .js-plotly-plot .plotly .bg { background: transparent !important; }
