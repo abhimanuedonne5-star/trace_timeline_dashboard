@@ -1,0 +1,11 @@
+command: ["python", "app.py"]
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "2a6b5b84e8974695"     # replace with your SQL Warehouse ID
+  - name: CATALOG
+    value: "dev_omni"      # replace with your catalog name
+  - name: SCHEMA
+    value: "dev_omni_gold"       # replace with your schema name
+  - name: TABLE
+    value: "trace_events"      # replace with your table name

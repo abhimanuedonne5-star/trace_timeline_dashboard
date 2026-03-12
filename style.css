@@ -1,0 +1,109 @@
+/* Dark theme overrides for Dash dropdowns */
+
+/* Dropdown control */
+.dark-dropdown .Select-control {
+  background-color: #0d0f1a !important;
+  border: 1px solid #1e2a3a !important;
+  border-radius: 6px !important;
+  color: #e2e8f0 !important;
+}
+
+.dark-dropdown .Select-control:hover {
+  border-color: #00d4ff !important;
+  box-shadow: 0 0 0 1px #00d4ff20 !important;
+}
+
+.dark-dropdown .Select-value-label,
+.dark-dropdown .Select-placeholder {
+  color: #94a3b8 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 12px !important;
+}
+
+.dark-dropdown .Select-input input {
+  color: #e2e8f0 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Dropdown menu */
+.dark-dropdown .Select-menu-outer {
+  background-color: #111827 !important;
+  border: 1px solid #1e2a3a !important;
+  border-radius: 6px !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6) !important;
+  z-index: 1000 !important;
+}
+
+.dark-dropdown .Select-option {
+  background-color: #111827 !important;
+  color: #cbd5e1 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+  padding: 8px 14px !important;
+}
+
+.dark-dropdown .Select-option:hover,
+.dark-dropdown .Select-option.is-focused {
+  background-color: #1e2a3a !important;
+  color: #00d4ff !important;
+}
+
+.dark-dropdown .Select-option.is-selected {
+  background-color: #0f3460 !important;
+  color: #00d4ff !important;
+}
+
+/* Arrow icon */
+.dark-dropdown .Select-arrow {
+  border-color: #475569 transparent transparent !important;
+}
+
+.dark-dropdown.is-open .Select-arrow {
+  border-color: transparent transparent #00d4ff !important;
+}
+
+/* Clear button */
+.dark-dropdown .Select-clear {
+  color: #475569 !important;
+}
+
+.dark-dropdown .Select-clear:hover {
+  color: #ef4444 !important;
+}
+
+/* Disabled state */
+.dark-dropdown.is-disabled .Select-control {
+  background-color: #080a12 !important;
+  border-color: #111520 !important;
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+/* Scrollbar inside dropdown menu */
+.dark-dropdown .Select-menu::-webkit-scrollbar {
+  width: 4px;
+}
+.dark-dropdown .Select-menu::-webkit-scrollbar-track {
+  background: #111827;
+}
+.dark-dropdown .Select-menu::-webkit-scrollbar-thumb {
+  background: #1e3a5f;
+  border-radius: 2px;
+}
+
+/* Plotly chart background fix */
+.js-plotly-plot .plotly .bg {
+  fill: #0d0f1a !important;
+}
+
+/* Global scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #070810; }
+::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #00d4ff; }
+
+/* Body reset */
+body {
+  margin: 0;
+  background: #070810;
+}
