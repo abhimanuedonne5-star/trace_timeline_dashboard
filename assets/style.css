@@ -1,0 +1,131 @@
+/* ── Reset ── */
+* { box-sizing: border-box; }
+body { margin: 0; background: #05060f; overflow: hidden; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #05060f; }
+::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #00d4ff40; }
+
+/* ── Tree node hover ── */
+[id*="user-row"]:hover  { background: rgba(0, 212, 255, 0.05) !important; }
+[id*="conv-row"]:hover  { background: rgba(167, 139, 250, 0.05) !important; }
+[id*="trace-row"]:hover { background: rgba(52, 211, 153, 0.06) !important; }
+[id*="trace-row"]:active { background: rgba(52, 211, 153, 0.13) !important; }
+
+/* ── Dropdown control ── */
+.dark-dd .Select-control {
+  background-color: #0f1120 !important;
+  border: 1px solid #1a2035 !important;
+  border-radius: 6px !important;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  min-height: 32px !important;
+  cursor: pointer;
+}
+.dark-dd .Select-control:hover {
+  border-color: #00d4ff50 !important;
+}
+.dark-dd.is-open .Select-control {
+  border-color: #00d4ff !important;
+  box-shadow: 0 0 0 2px #00d4ff18 !important;
+}
+
+/* ── Selected value (the text you see after picking) ── */
+.dark-dd .Select-value-label,
+.dark-dd .Select--single .Select-value .Select-value-label {
+  color: #00d4ff !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+
+/* ── Placeholder ── */
+.dark-dd .Select-placeholder {
+  color: #2a3a52 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+}
+
+/* ── Search input ── */
+.dark-dd .Select-input > input {
+  color: #e2e8f0 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+}
+
+/* ── Dropdown menu panel ── */
+.dark-dd .Select-menu-outer {
+  background-color: #080a14 !important;
+  border: 1px solid #1a2035 !important;
+  border-radius: 6px !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.9), 0 0 0 1px #0f1a2a !important;
+  margin-top: 4px !important;
+  z-index: 9999 !important;
+}
+
+/* ── Option items ── */
+.dark-dd .Select-option {
+  background: #080a14 !important;
+  color: #64748b !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+  padding: 8px 14px !important;
+  border-bottom: 1px solid #0e1525 !important;
+  transition: background 0.1s, color 0.1s;
+}
+.dark-dd .Select-option:hover,
+.dark-dd .Select-option.is-focused {
+  background: #0d1e34 !important;
+  color: #e2e8f0 !important;
+}
+.dark-dd .Select-option.is-selected {
+  background: #081e38 !important;
+  color: #00d4ff !important;
+  font-weight: 600 !important;
+}
+
+/* ── Arrows & clear ── */
+.dark-dd .Select-arrow-zone .Select-arrow {
+  border-color: #1e3a5f transparent transparent !important;
+}
+.dark-dd.is-open .Select-arrow-zone .Select-arrow {
+  border-color: transparent transparent #00d4ff !important;
+}
+.dark-dd .Select-clear { color: #2a3a52 !important; }
+.dark-dd .Select-clear:hover { color: #ef4444 !important; }
+
+/* ── Drag handle ── */
+#drag-handle {
+  width: 4px;
+  min-width: 4px;
+  background: #1a2035;
+  cursor: col-resize;
+  transition: background 0.15s;
+  flex-shrink: 0;
+  position: relative;
+}
+#drag-handle:hover,
+#drag-handle.dragging {
+  background: #00d4ff40;
+}
+#drag-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 32px;
+  border-radius: 2px;
+  background: #1e3a5f;
+}
+#drag-handle:hover::after {
+  background: #00d4ff80;
+}
+
+/* ── Plotly chart ── */
+.js-plotly-plot .plotly,
+.js-plotly-plot .plotly .bg { background: transparent !important; }
+
+/* ── Remove default focus outline ── */
+*:focus { outline: none; }

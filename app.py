@@ -212,14 +212,14 @@ def stat_card(label, sid, accent_color=ACCENT):
             display="block", marginBottom="6px",
         )),
         html.Span("—", id=sid, style=dict(
-            fontSize="20px", fontWeight="700",
+            fontSize="17px", fontWeight="700",
             color=accent_color,
             fontFamily="JetBrains Mono, monospace",
         )),
     ], style=dict(
         background=SURFACE2, border=f"1px solid {BORDER}",
-        borderRadius="8px", padding="14px 20px", minWidth="130px",
-        boxShadow=f"0 0 12px {accent_color}08",
+        borderRadius="6px", padding="10px 16px", minWidth="110px",
+        boxShadow=f"0 0 10px {accent_color}08",
     ))
 
 
@@ -320,35 +320,37 @@ def trace_node(uid, cid, tid, event_count=None, total_ms=None):
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
 app.layout = html.Div(
-    style=dict(background=BG, minHeight="100vh",
-               fontFamily="JetBrains Mono, monospace", color=TEXT),
+    style=dict(
+        background=BG, height="100vh", overflow="hidden",
+        display="flex", flexDirection="column",
+        fontFamily="JetBrains Mono, monospace", color=TEXT,
+    ),
     children=[
         html.Link(
             rel="stylesheet",
             href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@700;800&display=swap",
         ),
 
-        # ── Top bar ────────────────────────────────────────────────────────────
+        # ── Top bar + filters combined ─────────────────────────────────────────
         html.Div([
+            # Title
             html.Div([
                 html.H1("Trace Execution Timeline", style=dict(
-                    fontFamily="'Syne', sans-serif", fontSize="20px",
-                    fontWeight="800", color=TEXT, margin="0 0 2px 0",
+                    fontFamily="'Syne', sans-serif", fontSize="18px",
+                    fontWeight="800", color=TEXT, margin="0 0 1px 0",
                     letterSpacing="-0.3px",
                 )),
                 html.Span("User  →  Conversation  →  Trace  →  Timeline", style=dict(
-                    fontSize="9px", color=DIM, letterSpacing="3px",
+                    fontSize="8px", color=DIM, letterSpacing="3px",
                     textTransform="uppercase",
                 )),
-            ]),
-        ], style=dict(
-            padding="18px 28px 16px",
-            borderBottom=f"1px solid {BORDER}",
-            background=SURFACE,
-        )),
+            ], style=dict(minWidth="260px")),
 
-        # ── Filter bar (full width, side by side) ──────────────────────────────
-        html.Div([
+            # Divider
+            html.Div(style=dict(width="1px", background=BORDER,
+                                alignSelf="stretch", margin="0 20px")),
+
+            # Filters side by side
             html.Div([
                 html.Label("User ID", style=LABEL_S),
                 dcc.Dropdown(
@@ -356,7 +358,7 @@ app.layout = html.Div(
                     clearable=True, style=DD_S, className="dark-dd",
                     optionHeight=32,
                 ),
-            ], style=dict(flex="1", minWidth="180px")),
+            ], style=dict(flex="1", minWidth="150px")),
 
             html.Div([
                 html.Label("Conversation ID", style=LABEL_S),
@@ -365,7 +367,7 @@ app.layout = html.Div(
                     clearable=True, style=DD_S, className="dark-dd",
                     optionHeight=32,
                 ),
-            ], style=dict(flex="1", minWidth="180px")),
+            ], style=dict(flex="1", minWidth="150px")),
 
             html.Div([
                 html.Label("Trace ID", style=LABEL_S),
@@ -374,57 +376,61 @@ app.layout = html.Div(
                     clearable=True, style=DD_S, className="dark-dd",
                     optionHeight=32,
                 ),
-            ], style=dict(flex="2", minWidth="220px")),
+            ], style=dict(flex="2", minWidth="200px")),
         ], style=dict(
-            display="flex", gap="16px", padding="14px 28px",
+            display="flex", alignItems="center", gap="14px",
+            padding="10px 20px",
             borderBottom=f"1px solid {BORDER}",
-            background=SURFACE, alignItems="flex-end",
+            background=SURFACE,
+            flexShrink="0",
         )),
 
-        # ── Main layout: sidebar + content ─────────────────────────────────────
+        # ── Main layout: sidebar + drag handle + content ───────────────────────
         html.Div([
 
             # ── LEFT: Explorer tree ────────────────────────────────────────────
             html.Div([
                 html.Div([
-                    html.Div("◈", style=dict(
-                        fontSize="8px", color=GREEN, display="inline",
-                        marginRight="6px",
-                    )),
+                    html.Span("◈", style=dict(fontSize="8px", color=GREEN,
+                                              marginRight="6px")),
                     html.Span("Explorer", style=dict(
                         fontSize="9px", color=MUTED, letterSpacing="2px",
                         textTransform="uppercase",
                     )),
                 ], style=dict(
-                    padding="14px 14px 10px",
+                    padding="10px 12px 8px",
                     borderBottom=f"1px solid {BORDER}",
-                    marginBottom="4px",
+                    flexShrink="0",
                 )),
                 html.Div(
                     id="tree-root",
                     style=dict(
                         overflowY="auto",
-                        maxHeight="calc(100vh - 190px)",
+                        flex="1",
                         padding="4px 6px 10px",
                     ),
                 ),
-            ], style=dict(
-                width="280px", minWidth="280px",
-                background=SURFACE, borderRight=f"1px solid {BORDER}",
+            ], id="sidebar-panel", style=dict(
+                width="260px", minWidth="160px",
+                background=SURFACE,
                 display="flex", flexDirection="column",
-                height="calc(100vh - 120px)",
+                overflow="hidden",
+                flexShrink="0",
             )),
+
+            # ── Drag handle ───────────────────────────────────────────────────
+            html.Div(id="drag-handle"),
 
             # ── RIGHT: Timeline ────────────────────────────────────────────────
             html.Div([
 
                 # Breadcrumb
                 html.Div(id="breadcrumb", style=dict(
-                    padding="9px 24px", borderBottom=f"1px solid {BORDER}",
-                    fontSize="10px", color=MUTED, minHeight="34px",
+                    padding="7px 18px", borderBottom=f"1px solid {BORDER}",
+                    fontSize="10px", color=MUTED, minHeight="30px",
                     display="flex", alignItems="center", gap="6px",
                     fontFamily="JetBrains Mono, monospace",
-                    background=SURFACE,
+                    background=SURFACE, flexShrink="0",
                 )),
 
                 # Stat cards
@@ -434,14 +440,19 @@ app.layout = html.Div(
                     stat_card("Components", "st-comps",  GREEN),
                     stat_card("Slowest",    "st-slow",   "#fbbf24"),
                 ], id="stat-row",
-                   style=dict(display="none", gap="12px", padding="14px 24px",
-                              flexWrap="wrap", borderBottom=f"1px solid {BORDER}",
-                              background=SURFACE2)),
+                   style=dict(
+                       display="none", gap="10px", padding="10px 18px",
+                       flexWrap="wrap", borderBottom=f"1px solid {BORDER}",
+                       background=SURFACE2, flexShrink="0",
+                   )),
 
                 # Chart / empty state
                 html.Div(
                     id="chart-area",
-                    style=dict(padding="20px 24px", flex="1", overflowY="auto"),
+                    style=dict(
+                        padding="12px 18px", flex="1",
+                        overflowY="auto", overflowX="hidden",
+                    ),
                     children=html.Div([
                         html.Div("◎", style=dict(
                             fontSize="44px", color=DIM,
@@ -455,17 +466,16 @@ app.layout = html.Div(
                                 letterSpacing="1px",
                             ),
                         ),
-                    ], style=dict(paddingTop="100px")),
+                    ], style=dict(paddingTop="80px")),
                 ),
 
             ], style=dict(
                 flex="1", display="flex", flexDirection="column",
-                overflow="hidden",
+                overflow="hidden", minWidth="0",
             )),
 
         ], style=dict(
-            display="flex",
-            height="calc(100vh - 120px)",
+            display="flex", flex="1", overflow="hidden",
         )),
 
         # Stores
