@@ -9,10 +9,10 @@ import json
 # WorkspaceClient() inside a Databricks App uses ambient OAuth — no token needed
 w = WorkspaceClient()
 
-CATALOG      = os.environ.get("CATALOG",      "your_catalog")
-SCHEMA       = os.environ.get("SCHEMA",       "your_schema")
+CATALOG      = os.environ.get("CATALOG",      "dev_omni")
+SCHEMA       = os.environ.get("SCHEMA",       "dev_omni_gold")
 TABLE        = os.environ.get("TABLE",        "trace_events")
-WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "")
+WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "2a6b5b84e8974695")
 
 FULL_TABLE = f"`{CATALOG}`.`{SCHEMA}`.`{TABLE}`"
 
