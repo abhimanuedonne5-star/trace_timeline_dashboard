@@ -127,7 +127,7 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
         paper_bgcolor="#05060f",
         plot_bgcolor="#0b0d1a",
         height=fh,
-        margin=dict(l=240, r=32, t=52, b=60),
+        margin=dict(l=8, r=24, t=44, b=52),
         font=dict(family="JetBrains Mono, monospace", size=11, color="#e2e8f0"),
         title=dict(
             text=(
@@ -164,7 +164,8 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             tickfont=dict(size=11, color="#94a3b8"),
             gridcolor="#0d1020",
             autorange="reversed",
-            ticklabelposition="outside",
+            automargin=True,
+            ticklabelstandoff=8,
         ),
         hoverlabel=dict(
             bgcolor="#0a0c18", bordercolor="#1e293b",
@@ -450,7 +451,7 @@ app.layout = html.Div(
                 html.Div(
                     id="chart-area",
                     style=dict(
-                        padding="12px 18px", flex="1",
+                        padding="8px 12px 8px 0", flex="1",
                         overflowY="auto", overflowX="hidden",
                     ),
                     children=html.Div([
@@ -481,6 +482,7 @@ app.layout = html.Div(
         # Stores
         dcc.Store(id="store-active-trace", data={}),
         dcc.Store(id="store-expanded",     data={}),
+        dcc.Store(id="store-tree-cache",   data={}),  # {key: list} — avoids re-querying
     ]
 )
 
@@ -508,104 +510,133 @@ def load_all_filters(_):
         return [], [], []
 
 
-# 2. Build / rebuild the tree when filters change or nodes are expanded
+# 2. Build / rebuild the tree — results are cached so nodes only query once
 @app.callback(
-    Output("tree-root",      "children"),
-    Output("store-expanded", "data"),
-    Input("f-user",          "value"),
-    Input("f-conv",          "value"),
-    Input("f-trace",         "value"),
+    Output("tree-root",        "children"),
+    Output("store-expanded",   "data"),
+    Output("store-tree-cache", "data"),
+    Input("f-user",            "value"),
+    Input("f-conv",            "value"),
+    Input("f-trace",           "value"),
     Input({"type": "user-row", "id": ALL}, "n_clicks"),
     Input({"type": "conv-row", "id": ALL}, "n_clicks"),
     State({"type": "user-row", "id": ALL}, "id"),
     State({"type": "conv-row", "id": ALL}, "id"),
-    State("store-expanded",  "data"),
+    State("store-expanded",    "data"),
+    State("store-tree-cache",  "data"),
     prevent_initial_call=False,
 )
 def build_tree(f_user, f_conv, f_trace,
                user_clicks, conv_clicks,
                user_ids, conv_ids,
-               expanded):
-    ctx = callback_context
+               expanded, cache):
+    ctx      = callback_context
     expanded = expanded or {}
+    cache    = cache    or {}
 
+    # Detect filter change → clear cache + collapse all
+    triggered_props = [t["prop_id"] for t in ctx.triggered] if ctx.triggered else []
+    filter_changed  = any(p.startswith("f-") for p in triggered_props)
+    if filter_changed:
+        cache    = {}
+        expanded = {}
+
+    # Toggle the clicked node
     if ctx.triggered:
         for t in ctx.triggered:
-            tid = t["prop_id"]
-            if "user-row" in tid and t["value"]:
-                key = json.loads(tid.split(".")[0])["id"]
+            pid = t["prop_id"]
+            if "user-row" in pid and t["value"]:
+                key = json.loads(pid.split(".")[0])["id"]
                 expanded[key] = not expanded.get(key, False)
-            elif "conv-row" in tid and t["value"]:
-                key = json.loads(tid.split(".")[0])["id"]
+            elif "conv-row" in pid and t["value"]:
+                key = json.loads(pid.split(".")[0])["id"]
                 expanded[key] = not expanded.get(key, False)
 
-    try:
-        where_parts = ["1=1"]
-        if f_user:  where_parts.append(f"user_id = '{f_user}'")
-        if f_conv:  where_parts.append(f"conversation_id = '{f_conv}'")
-        if f_trace: where_parts.append(f"trace_id = '{f_trace}'")
-        where = " AND ".join(where_parts)
+    where_parts = ["1=1"]
+    if f_user:  where_parts.append(f"user_id = '{f_user}'")
+    if f_conv:  where_parts.append(f"conversation_id = '{f_conv}'")
+    if f_trace: where_parts.append(f"trace_id = '{f_trace}'")
+    where = " AND ".join(where_parts)
 
-        users_df = run_query(f"""
-            SELECT DISTINCT user_id FROM {FULL_TABLE}
-            WHERE {where} AND user_id IS NOT NULL
-            ORDER BY user_id
-        """)
+    # ── Fetch users (cached) ──────────────────────────────────────────────────
+    u_key = f"users|{where}"
+    if u_key not in cache:
+        try:
+            df = run_query(f"""
+                SELECT DISTINCT user_id FROM {FULL_TABLE}
+                WHERE {where} AND user_id IS NOT NULL ORDER BY user_id
+            """)
+            cache[u_key] = df["user_id"].tolist()
+        except Exception as e:
+            print(f"[build_tree/users] {e}")
+            return ([html.P(str(e), style=dict(color="#ef4444", fontSize="10px",
+                                               padding="10px",
+                                               fontFamily="JetBrains Mono, monospace"))],
+                    expanded, cache)
 
-        tree = []
-        for _, ur in users_df.iterrows():
-            uid     = ur["user_id"]
-            u_exp   = expanded.get(uid, False)
-            u_children = []
+    tree = []
+    for uid in cache[u_key]:
+        u_exp      = expanded.get(uid, False)
+        u_children = []
 
-            if u_exp:
-                convs_df = run_query(f"""
-                    SELECT DISTINCT conversation_id FROM {FULL_TABLE}
-                    WHERE user_id = '{uid}'
-                      AND conversation_id IS NOT NULL
-                      AND {where}
-                    ORDER BY conversation_id
-                """)
-                for _, cr in convs_df.iterrows():
-                    cid   = cr["conversation_id"]
-                    c_key = f"{uid}||{cid}"
-                    c_exp = expanded.get(c_key, False)
-                    c_children = []
+        if u_exp:
+            # ── Fetch conversations for this user (cached) ────────────────────
+            c_key = f"convs|{uid}|{where}"
+            if c_key not in cache:
+                try:
+                    df = run_query(f"""
+                        SELECT DISTINCT conversation_id FROM {FULL_TABLE}
+                        WHERE user_id = '{uid}'
+                          AND conversation_id IS NOT NULL AND {where}
+                        ORDER BY conversation_id
+                    """)
+                    cache[c_key] = df["conversation_id"].tolist()
+                except Exception as e:
+                    print(f"[build_tree/convs] {e}")
+                    cache[c_key] = []
 
-                    if c_exp:
-                        traces_df = run_query(f"""
-                            SELECT trace_id,
-                                   COUNT(*)                   AS event_count,
-                                   ROUND(SUM(duration_ms), 1) AS total_ms
-                            FROM {FULL_TABLE}
-                            WHERE user_id = '{uid}'
-                              AND conversation_id = '{cid}'
-                              AND trace_id IS NOT NULL
-                              AND {where}
-                            GROUP BY trace_id
-                            ORDER BY MIN(timestamp) ASC
-                        """)
-                        for _, tr in traces_df.iterrows():
-                            c_children.append(
-                                trace_node(uid, cid, tr["trace_id"],
-                                           tr["event_count"], tr["total_ms"])
-                            )
+            for cid in cache[c_key]:
+                ck     = f"{uid}||{cid}"
+                c_exp  = expanded.get(ck, False)
+                c_children = []
 
-                    u_children.append(conv_node(uid, cid, expanded=c_exp))
-                    if c_children:
-                        u_children[-1].children[1].children = c_children
+                if c_exp:
+                    # ── Fetch traces for this conversation (cached) ───────────
+                    t_key = f"traces|{uid}|{cid}|{where}"
+                    if t_key not in cache:
+                        try:
+                            df = run_query(f"""
+                                SELECT trace_id,
+                                       COUNT(*)                   AS event_count,
+                                       ROUND(SUM(duration_ms), 1) AS total_ms
+                                FROM {FULL_TABLE}
+                                WHERE user_id = '{uid}'
+                                  AND conversation_id = '{cid}'
+                                  AND trace_id IS NOT NULL AND {where}
+                                GROUP BY trace_id
+                                ORDER BY MIN(timestamp) ASC
+                            """)
+                            cache[t_key] = df.to_dict("records")
+                        except Exception as e:
+                            print(f"[build_tree/traces] {e}")
+                            cache[t_key] = []
 
-            node = user_node(uid, expanded=u_exp)
-            if u_children:
-                node.children[1].children = u_children
-            tree.append(node)
+                    for tr in cache[t_key]:
+                        c_children.append(
+                            trace_node(uid, cid, tr["trace_id"],
+                                       tr["event_count"], tr["total_ms"])
+                        )
 
-        return tree, expanded
+                u_children.append(conv_node(uid, cid, expanded=c_exp))
+                if c_children:
+                    u_children[-1].children[1].children = c_children
 
-    except Exception as e:
-        print(f"[build_tree] {e}")
-        return [html.P(str(e), style=dict(color="#ef4444", fontSize="10px",
-                                          padding="10px", fontFamily="JetBrains Mono, monospace"))], expanded
+        node = user_node(uid, expanded=u_exp)
+        if u_children:
+            node.children[1].children = u_children
+        tree.append(node)
+
+    return tree, expanded, cache
 
 
 # 3. Handle trace click → store active trace
