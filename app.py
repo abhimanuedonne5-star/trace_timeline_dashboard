@@ -607,52 +607,64 @@ def cascade_filters(_, f_user, f_conv, f_from, f_to):
         return [], [], [], clear_conv, clear_trace
 
 
-# 2. Build / rebuild the tree — results are cached so nodes only query once
+# 2a. Manage expanded state — handles both filter resets and node toggles
+#     Separated from rendering so re-drawing the tree never eats a click.
 @app.callback(
-    Output("tree-root",        "children"),
     Output("store-expanded",   "data"),
     Output("store-tree-cache", "data"),
-    Input("f-user",            "value"),
-    Input("f-conv",            "value"),
-    Input("f-trace",           "value"),
-    Input("f-from",            "value"),
-    Input("f-to",              "value"),
+    Input("f-user",  "value"),
+    Input("f-conv",  "value"),
+    Input("f-trace", "value"),
+    Input("f-from",  "value"),
+    Input("f-to",    "value"),
     Input({"type": "user-row", "id": ALL}, "n_clicks"),
     Input({"type": "conv-row", "id": ALL}, "n_clicks"),
-    State({"type": "user-row", "id": ALL}, "id"),
-    State({"type": "conv-row", "id": ALL}, "id"),
-    State("store-expanded",    "data"),
-    State("store-tree-cache",  "data"),
+    State("store-expanded",   "data"),
+    State("store-tree-cache", "data"),
     prevent_initial_call=False,
 )
-def build_tree(f_user, f_conv, f_trace, f_from, f_to,
-               user_clicks, conv_clicks,
-               user_ids, conv_ids,
-               expanded, cache):
+def manage_expanded(f_user, f_conv, f_trace, f_from, f_to,
+                    user_clicks, conv_clicks,
+                    expanded, cache):
     ctx      = callback_context
     expanded = expanded or {}
     cache    = cache    or {}
 
-    # Detect filter change → clear cache + collapse all
     triggered_props = [t["prop_id"] for t in ctx.triggered] if ctx.triggered else []
     filter_changed  = any(p.startswith("f-") for p in triggered_props)
+
     if filter_changed:
         cache    = {}
         expanded = {}
-        # Auto-expand the selected user so their conversations are visible immediately
         if f_user:
             expanded[f_user] = True
+        return expanded, cache
 
-    # Toggle the clicked node
-    if ctx.triggered:
-        for t in ctx.triggered:
-            pid = t["prop_id"]
-            if "user-row" in pid and t["value"]:
-                key = json.loads(pid.split(".")[0])["id"]
-                expanded[key] = not expanded.get(key, False)
-            elif "conv-row" in pid and t["value"]:
-                key = json.loads(pid.split(".")[0])["id"]
-                expanded[key] = not expanded.get(key, False)
+    # Toggle the clicked node only
+    for t in ctx.triggered:
+        pid = t["prop_id"]
+        if t["value"] and ("user-row" in pid or "conv-row" in pid):
+            key = json.loads(pid.split(".")[0])["id"]
+            expanded[key] = not expanded.get(key, False)
+
+    return expanded, cache
+
+
+# 2b. Render tree from expanded state + filters — pure rendering, no state writes
+@app.callback(
+    Output("tree-root", "children"),
+    Input("store-expanded",   "data"),
+    State("f-user",  "value"),
+    State("f-conv",  "value"),
+    State("f-trace", "value"),
+    State("f-from",  "value"),
+    State("f-to",    "value"),
+    State("store-tree-cache", "data"),
+    prevent_initial_call=False,
+)
+def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to, cache):
+    expanded = expanded or {}
+    cache    = cache    or {}
 
     where_parts = ["1=1"]
     if f_user:  where_parts.append(f"user_id = '{f_user}'")
@@ -662,7 +674,7 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
     if f_to:    where_parts.append(f"timestamp <= CAST('{fmt_ts(f_to)}' AS TIMESTAMP)")
     where = " AND ".join(where_parts)
 
-    # ── Fetch users (cached) ──────────────────────────────────────────────────
+    # ── Fetch users (use cache populated by manage_expanded) ─────────────────
     u_key = f"users|{where}"
     if u_key not in cache:
         try:
@@ -672,11 +684,10 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
             """)
             cache[u_key] = df["user_id"].tolist()
         except Exception as e:
-            print(f"[build_tree/users] {e}")
-            return ([html.P(str(e), style=dict(color="#ef4444", fontSize="10px",
-                                               padding="10px",
-                                               fontFamily="JetBrains Mono, monospace"))],
-                    expanded, cache)
+            print(f"[render_tree/users] {e}")
+            return [html.P(str(e), style=dict(color="#ef4444", fontSize="10px",
+                                              padding="10px",
+                                              fontFamily="JetBrains Mono, monospace"))]
 
     tree = []
     for uid in cache[u_key]:
@@ -684,7 +695,6 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
         u_children = []
 
         if u_exp:
-            # ── Fetch conversations for this user (cached) ────────────────────
             c_key = f"convs|{uid}|{where}"
             if c_key not in cache:
                 try:
@@ -696,16 +706,15 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
                     """)
                     cache[c_key] = df["conversation_id"].tolist()
                 except Exception as e:
-                    print(f"[build_tree/convs] {e}")
+                    print(f"[render_tree/convs] {e}")
                     cache[c_key] = []
 
             for cid in cache[c_key]:
-                ck     = f"{uid}||{cid}"
-                c_exp  = expanded.get(ck, False)
+                ck    = f"{uid}||{cid}"
+                c_exp = expanded.get(ck, False)
                 c_children = []
 
                 if c_exp:
-                    # ── Fetch traces for this conversation (cached) ───────────
                     t_key = f"traces|{uid}|{cid}|{where}"
                     if t_key not in cache:
                         try:
@@ -722,7 +731,7 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
                             """)
                             cache[t_key] = df.to_dict("records")
                         except Exception as e:
-                            print(f"[build_tree/traces] {e}")
+                            print(f"[render_tree/traces] {e}")
                             cache[t_key] = []
 
                     for tr in cache[t_key]:
@@ -740,7 +749,7 @@ def build_tree(f_user, f_conv, f_trace, f_from, f_to,
             node.children[1].children = u_children
         tree.append(node)
 
-    return tree, expanded, cache
+    return tree
 
 
 # 3. Handle trace click → store active trace
