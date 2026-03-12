@@ -136,6 +136,12 @@ body { margin: 0; background: #05060f; overflow: hidden; }
   outline: none;
 }
 
+/* ── Summary table rows ── */
+tr.summary-row:hover td {
+  background: rgba(0, 212, 255, 0.04) !important;
+  color: #e2e8f0 !important;
+}
+
 /* ── Plotly chart ── */
 .js-plotly-plot .plotly,
 .js-plotly-plot .plotly .bg { background: transparent !important; }

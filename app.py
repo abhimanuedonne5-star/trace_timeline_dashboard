@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, dcc, html, Input, Output, State, callback_context, ALL, MATCH
+from dash import Dash, dcc, html, Input, Output, State, callback_context, ALL, MATCH, no_update
 from databricks.sdk import WorkspaceClient
 import json
 
@@ -543,25 +543,68 @@ app.layout = html.Div(
 
 # ── CALLBACKS ──────────────────────────────────────────────────────────────────
 
-# 1. Load all filter dropdowns on startup
+# 1. Cascading filter dropdowns
+#    - On load : populate all three with all distinct values
+#    - User changes   → re-scope conv + trace options, clear their values
+#    - Conv changes   → re-scope trace options, clear its value
+#    - From/To change → re-scope all options to the time window
 @app.callback(
     Output("f-user",  "options"),
     Output("f-conv",  "options"),
     Output("f-trace", "options"),
-    Input("f-user",   "id"),
+    Output("f-conv",  "value",   allow_duplicate=True),
+    Output("f-trace", "value",   allow_duplicate=True),
+    Input("f-user",   "id"),       # fires once on mount
+    Input("f-user",   "value"),
+    Input("f-conv",   "value"),
+    Input("f-from",   "value"),
+    Input("f-to",     "value"),
+    prevent_initial_call="initial_duplicate",
 )
-def load_all_filters(_):
+def cascade_filters(_, f_user, f_conv, f_from, f_to):
+    ctx      = callback_context
+    trigger  = ctx.triggered[0]["prop_id"] if ctx.triggered else ""
+
+    # Decide which downstream values to clear
+    clear_conv  = no_update
+    clear_trace = no_update
+    if "f-user.value"  in trigger:
+        clear_conv  = None
+        clear_trace = None
+    elif "f-conv.value" in trigger:
+        clear_trace = None
+    elif "f-from.value" in trigger or "f-to.value" in trigger:
+        clear_conv  = None
+        clear_trace = None
+
+    # Build shared time-range WHERE fragment
+    ts_parts = []
+    if f_from: ts_parts.append(f"timestamp >= CAST('{fmt_ts(f_from)}' AS TIMESTAMP)")
+    if f_to:   ts_parts.append(f"timestamp <= CAST('{fmt_ts(f_to)}'   AS TIMESTAMP)")
+    ts_where = (" AND " + " AND ".join(ts_parts)) if ts_parts else ""
+
     try:
-        users  = run_query(f"SELECT DISTINCT user_id FROM {FULL_TABLE} WHERE user_id IS NOT NULL ORDER BY user_id")
-        convs  = run_query(f"SELECT DISTINCT conversation_id FROM {FULL_TABLE} WHERE conversation_id IS NOT NULL ORDER BY conversation_id")
-        traces = run_query(f"SELECT DISTINCT trace_id FROM {FULL_TABLE} WHERE trace_id IS NOT NULL ORDER BY trace_id")
-        u_opts = [{"label": v, "value": v} for v in users["user_id"].tolist()]
-        c_opts = [{"label": v, "value": v} for v in convs["conversation_id"].tolist()]
-        t_opts = [{"label": v, "value": v} for v in traces["trace_id"].tolist()]
-        return u_opts, c_opts, t_opts
+        # Users: unscoped (always show all)
+        u_df   = run_query(f"SELECT DISTINCT user_id FROM {FULL_TABLE} WHERE user_id IS NOT NULL{ts_where} ORDER BY user_id")
+        u_opts = [{"label": v, "value": v} for v in u_df["user_id"].tolist()]
+
+        # Conversations: scoped to selected user
+        c_where = f" AND user_id = '{f_user}'" if f_user else ""
+        c_df    = run_query(f"SELECT DISTINCT conversation_id FROM {FULL_TABLE} WHERE conversation_id IS NOT NULL{c_where}{ts_where} ORDER BY conversation_id")
+        c_opts  = [{"label": v, "value": v} for v in c_df["conversation_id"].tolist()]
+
+        # Traces: scoped to selected user + conv
+        t_where = ""
+        if f_user: t_where += f" AND user_id = '{f_user}'"
+        if f_conv: t_where += f" AND conversation_id = '{f_conv}'"
+        t_df    = run_query(f"SELECT DISTINCT trace_id FROM {FULL_TABLE} WHERE trace_id IS NOT NULL{t_where}{ts_where} ORDER BY trace_id")
+        t_opts  = [{"label": v, "value": v} for v in t_df["trace_id"].tolist()]
+
+        return u_opts, c_opts, t_opts, clear_conv, clear_trace
+
     except Exception as e:
-        print(f"[load_filters] {e}")
-        return [], [], []
+        print(f"[cascade_filters] {e}")
+        return [], [], [], clear_conv, clear_trace
 
 
 # 2. Build / rebuild the tree — results are cached so nodes only query once
@@ -745,7 +788,38 @@ def set_trace_from_filter(trace_id):
         return {}
 
 
-# 5. Render timeline from active trace store
+# ── Summary view helpers ───────────────────────────────────────────────────────
+def summary_stat(label, value, color=ACCENT):
+    return html.Div([
+        html.Div(value, style=dict(fontSize="22px", fontWeight="700",
+                                   color=color, fontFamily="JetBrains Mono, monospace",
+                                   lineHeight="1.2")),
+        html.Div(label, style=dict(fontSize="9px", color=MUTED,
+                                   letterSpacing="2px", textTransform="uppercase",
+                                   fontFamily="JetBrains Mono, monospace",
+                                   marginTop="4px")),
+    ], style=dict(background=SURFACE2, border=f"1px solid {BORDER}",
+                  borderRadius="8px", padding="14px 20px", minWidth="120px",
+                  boxShadow=f"0 0 12px {color}0a"))
+
+
+def summary_table_row(cells, header=False):
+    cell_style = dict(
+        padding="8px 14px", fontSize="11px",
+        fontFamily="JetBrains Mono, monospace",
+        borderBottom=f"1px solid {BORDER}",
+        color=MUTED if header else "#94a3b8",
+        fontWeight="600" if header else "400",
+        letterSpacing="1px" if header else "0",
+        textTransform="uppercase" if header else "none",
+        fontSize="9px" if header else "11px",
+        whiteSpace="nowrap", overflow="hidden", textOverflow="ellipsis",
+    )
+    return html.Tr([html.Th(c, style=cell_style) if header
+                    else html.Td(c, style=cell_style) for c in cells])
+
+
+# 5. Render: placeholder / user overview / conversation overview / trace Gantt
 @app.callback(
     Output("chart-area",  "children"),
     Output("stat-row",    "style"),
@@ -755,113 +829,252 @@ def set_trace_from_filter(trace_id):
     Output("st-slow",     "children"),
     Output("breadcrumb",  "children"),
     Input("store-active-trace", "data"),
-    State("f-from", "value"),
-    State("f-to",   "value"),
+    Input("f-user",  "value"),
+    Input("f-conv",  "value"),
+    State("f-from",  "value"),
+    State("f-to",    "value"),
 )
-def render_timeline(active, f_from, f_to):
+def render_main(active, f_user, f_conv, f_from, f_to):
     hidden   = dict(display="none")
     blank    = ("—", "—", "—", "—")
-    empty_bc = html.Span("Select a trace to begin", style=dict(color=DIM))
+
+    def fmt(ms):
+        ms = float(ms)
+        return f"{ms/1000:.3f}s" if ms >= 1000 else f"{ms:.2f}ms"
+
+    ts_parts = []
+    if f_from: ts_parts.append(f"timestamp >= CAST('{fmt_ts(f_from)}' AS TIMESTAMP)")
+    if f_to:   ts_parts.append(f"timestamp <= CAST('{fmt_ts(f_to)}'   AS TIMESTAMP)")
+    ts_where = (" AND " + " AND ".join(ts_parts)) if ts_parts else ""
+
+    # ── TRACE selected → Gantt timeline ───────────────────────────────────────
+    if active and active.get("tid"):
+        uid, cid, tid = active["uid"], active["cid"], active["tid"]
+        try:
+            df = run_query(f"""
+                SELECT component, operation, operation_type, source,
+                    CAST(duration_ms AS DOUBLE) AS duration_ms,
+                    CAST(
+                        (
+                            (UNIX_MICROS(timestamp) - CAST(duration_ms * 1000 AS BIGINT))
+                            - MIN(UNIX_MICROS(timestamp) - CAST(duration_ms * 1000 AS BIGINT))
+                                OVER (PARTITION BY trace_id)
+                        )
+                    AS DOUBLE) / 1000.0 AS start_offset_ms
+                FROM {FULL_TABLE}
+                WHERE trace_id        = '{tid}'
+                  AND user_id         = '{uid}'
+                  AND conversation_id = '{cid}'
+                  {("AND timestamp >= CAST('" + fmt_ts(f_from) + "' AS TIMESTAMP)") if f_from else ""}
+                  {("AND timestamp <= CAST('" + fmt_ts(f_to)   + "' AS TIMESTAMP)") if f_to   else ""}
+                ORDER BY start_offset_ms ASC
+            """)
+            if df.empty:
+                return (html.P("No events found.", style=dict(color="#6b7280",
+                               padding="40px", textAlign="center")),
+                        hidden, *blank,
+                        html.Span("No events in selected range", style=dict(color=DIM)))
+
+            df["start_offset_ms"] = pd.to_numeric(df["start_offset_ms"], errors="coerce").fillna(0)
+            df["duration_ms"]     = pd.to_numeric(df["duration_ms"],     errors="coerce").fillna(0)
+            fig      = build_gantt(df)
+            total_ms = (df["start_offset_ms"] + df["duration_ms"]).max()
+            slowest  = df.loc[df["duration_ms"].idxmax()]
+            n_comps  = df["component"].fillna("").nunique()
+            bc = [
+                html.Span("👤", style=dict(marginRight="4px")),
+                html.Span(uid, style=dict(color="#4a5568")),
+                html.Span(" → ", style=dict(color=DIM)),
+                html.Span("💬", style=dict(marginRight="4px")),
+                html.Span(cid, style=dict(color="#4a5568")),
+                html.Span(" → ", style=dict(color=DIM)),
+                html.Span("🔍", style=dict(marginRight="4px")),
+                html.Span(tid[:48] + ("…" if len(tid) > 48 else ""),
+                          style=dict(color=ACCENT, fontWeight="700")),
+            ]
+            chart = dcc.Graph(figure=fig,
+                              config=dict(displayModeBar=True,
+                                          modeBarButtonsToRemove=["select2d", "lasso2d"],
+                                          displaylogo=False,
+                                          toImageButtonOptions=dict(format="png",
+                                              filename="trace_timeline", scale=2)),
+                              style=dict(width="100%"))
+            return (chart,
+                    dict(display="flex", gap="12px", padding="14px 24px",
+                         flexWrap="wrap", borderBottom=f"1px solid {BORDER}",
+                         background=SURFACE2),
+                    str(len(df)), fmt(total_ms), str(n_comps),
+                    f"{slowest['component']} · {fmt(float(slowest['duration_ms']))}",
+                    bc)
+        except Exception as e:
+            print(f"[render/trace] {e}")
+            return (html.Div([html.P("⚠ Error", style=dict(color="#ef4444", fontWeight="700")),
+                              html.Pre(str(e), style=dict(color="#475569", fontSize="10px",
+                                                          whiteSpace="pre-wrap"))],
+                             style=dict(padding="24px", fontFamily="JetBrains Mono, monospace")),
+                    hidden, *blank, html.Span("Error", style=dict(color="#ef4444")))
+
+    # ── CONVERSATION selected → trace list ────────────────────────────────────
+    if f_conv and f_user:
+        try:
+            df = run_query(f"""
+                SELECT trace_id,
+                       COUNT(*)                        AS event_count,
+                       ROUND(SUM(duration_ms), 1)      AS total_ms,
+                       COUNT(DISTINCT component)        AS components,
+                       MIN(timestamp)                   AS started_at
+                FROM {FULL_TABLE}
+                WHERE user_id = '{f_user}' AND conversation_id = '{f_conv}'
+                  AND trace_id IS NOT NULL{ts_where}
+                GROUP BY trace_id
+                ORDER BY started_at ASC
+            """)
+            bc = [
+                html.Span("👤", style=dict(marginRight="4px")),
+                html.Span(f_user, style=dict(color="#4a5568")),
+                html.Span(" → ", style=dict(color=DIM)),
+                html.Span("💬", style=dict(marginRight="4px")),
+                html.Span(f_conv, style=dict(color=PURPLE, fontWeight="700")),
+                html.Span("  ·  ", style=dict(color=DIM)),
+                html.Span(f"{len(df)} traces", style=dict(color=MUTED, fontSize="9px",
+                           letterSpacing="1px", textTransform="uppercase")),
+            ]
+            rows = [summary_table_row(["Trace ID", "Events", "Duration",
+                                       "Components", "Started At"], header=True)]
+            for _, r in df.iterrows():
+                tid_short = str(r["trace_id"])[:44] + ("…" if len(str(r["trace_id"])) > 44 else "")
+                rows.append(html.Tr(
+                    [html.Td(c, style=dict(
+                        padding="8px 14px", fontSize="11px",
+                        fontFamily="JetBrains Mono, monospace",
+                        borderBottom=f"1px solid {BORDER}",
+                        color=col, whiteSpace="nowrap",
+                    )) for c, col in [
+                        (tid_short,           ACCENT),
+                        (str(int(float(r["event_count"]))), "#94a3b8"),
+                        (fmt(float(r["total_ms"])),         GREEN),
+                        (str(int(float(r["components"]))),  "#94a3b8"),
+                        (str(r["started_at"])[:19],         MUTED),
+                    ]],
+                    id={"type": "trace-row",
+                        "id": f"{f_user}||{f_conv}||{r['trace_id']}"},
+                    n_clicks=0,
+                    style=dict(cursor="pointer"),
+                    className="summary-row",
+                ))
+            content = html.Div([
+                html.Div([
+                    html.Span("💬", style=dict(fontSize="18px", marginRight="10px")),
+                    html.Span(f_conv, style=dict(fontSize="14px", fontWeight="700",
+                                                  color=TEXT,
+                                                  fontFamily="JetBrains Mono, monospace")),
+                ], style=dict(display="flex", alignItems="center",
+                              marginBottom="20px")),
+                html.Div([
+                    summary_stat("Traces",    str(len(df)),                          PURPLE),
+                    summary_stat("Events",    str(int(df["event_count"].astype(float).sum())), ACCENT),
+                    summary_stat("Duration",  fmt(df["total_ms"].astype(float).sum()), GREEN),
+                ], style=dict(display="flex", gap="12px", flexWrap="wrap",
+                              marginBottom="24px")),
+                html.Div("Click a trace to open its timeline", style=dict(
+                    fontSize="9px", color=DIM, letterSpacing="2px",
+                    textTransform="uppercase", marginBottom="10px",
+                )),
+                html.Div(html.Table(rows, style=dict(
+                    width="100%", borderCollapse="collapse",
+                )), style=dict(
+                    background=SURFACE2, border=f"1px solid {BORDER}",
+                    borderRadius="8px", overflow="hidden",
+                )),
+            ], style=dict(padding="24px"))
+            return content, hidden, *blank, bc
+        except Exception as e:
+            print(f"[render/conv] {e}")
+
+    # ── USER selected → conversation list ─────────────────────────────────────
+    if f_user:
+        try:
+            df = run_query(f"""
+                SELECT conversation_id,
+                       COUNT(DISTINCT trace_id)         AS traces,
+                       COUNT(*)                         AS events,
+                       ROUND(SUM(duration_ms), 1)       AS total_ms,
+                       MIN(timestamp)                   AS first_event,
+                       MAX(timestamp)                   AS last_event
+                FROM {FULL_TABLE}
+                WHERE user_id = '{f_user}' AND conversation_id IS NOT NULL{ts_where}
+                GROUP BY conversation_id
+                ORDER BY first_event ASC
+            """)
+            bc = [
+                html.Span("👤", style=dict(marginRight="4px")),
+                html.Span(f_user, style=dict(color=ACCENT, fontWeight="700")),
+                html.Span("  ·  ", style=dict(color=DIM)),
+                html.Span(f"{len(df)} conversations", style=dict(
+                    color=MUTED, fontSize="9px",
+                    letterSpacing="1px", textTransform="uppercase")),
+            ]
+            rows = [summary_table_row(
+                ["Conversation ID", "Traces", "Events", "Total Duration",
+                 "First Event", "Last Event"], header=True)]
+            for _, r in df.iterrows():
+                cid_short = str(r["conversation_id"])[:36] + \
+                            ("…" if len(str(r["conversation_id"])) > 36 else "")
+                rows.append(html.Tr(
+                    [html.Td(c, style=dict(
+                        padding="8px 14px", fontSize="11px",
+                        fontFamily="JetBrains Mono, monospace",
+                        borderBottom=f"1px solid {BORDER}",
+                        color=col, whiteSpace="nowrap",
+                    )) for c, col in [
+                        (cid_short,                         PURPLE),
+                        (str(int(float(r["traces"]))),       "#94a3b8"),
+                        (str(int(float(r["events"]))),       "#94a3b8"),
+                        (fmt(float(r["total_ms"])),          GREEN),
+                        (str(r["first_event"])[:19],         MUTED),
+                        (str(r["last_event"])[:19],          MUTED),
+                    ]],
+                    style=dict(cursor="default"),
+                    className="summary-row",
+                ))
+            content = html.Div([
+                html.Div([
+                    html.Span("👤", style=dict(fontSize="18px", marginRight="10px")),
+                    html.Span(f_user, style=dict(fontSize="14px", fontWeight="700",
+                                                  color=TEXT,
+                                                  fontFamily="JetBrains Mono, monospace")),
+                ], style=dict(display="flex", alignItems="center",
+                              marginBottom="20px")),
+                html.Div([
+                    summary_stat("Conversations", str(len(df)),                           ACCENT),
+                    summary_stat("Total Traces",  str(int(df["traces"].astype(float).sum())), PURPLE),
+                    summary_stat("Total Events",  str(int(df["events"].astype(float).sum())), GREEN),
+                    summary_stat("Total Duration",fmt(df["total_ms"].astype(float).sum()),  "#fbbf24"),
+                ], style=dict(display="flex", gap="12px", flexWrap="wrap",
+                              marginBottom="24px")),
+                html.Div("Select a conversation in the explorer to drill in",
+                         style=dict(fontSize="9px", color=DIM, letterSpacing="2px",
+                                    textTransform="uppercase", marginBottom="10px")),
+                html.Div(html.Table(rows, style=dict(
+                    width="100%", borderCollapse="collapse",
+                )), style=dict(
+                    background=SURFACE2, border=f"1px solid {BORDER}",
+                    borderRadius="8px", overflow="hidden",
+                )),
+            ], style=dict(padding="24px"))
+            return content, hidden, *blank, bc
+        except Exception as e:
+            print(f"[render/user] {e}")
+
+    # ── Nothing selected → placeholder ────────────────────────────────────────
     placeholder = html.Div([
         html.Div("◎", style=dict(fontSize="44px", color=DIM,
                                   textAlign="center", marginBottom="16px")),
-        html.P("Click a Trace ID in the explorer to render its timeline",
+        html.P("Select a User ID or pick a Trace from the explorer",
                style=dict(color=DIM, fontSize="11px", textAlign="center",
                            fontFamily="JetBrains Mono, monospace", letterSpacing="1px")),
     ], style=dict(paddingTop="100px"))
-
-    if not active or not active.get("tid"):
-        return placeholder, hidden, *blank, empty_bc
-
-    uid, cid, tid = active["uid"], active["cid"], active["tid"]
-
-    try:
-        df = run_query(f"""
-            SELECT
-                component,
-                operation,
-                operation_type,
-                source,
-                CAST(duration_ms AS DOUBLE) AS duration_ms,
-                CAST(
-                    (
-                        (UNIX_MICROS(timestamp) - CAST(duration_ms * 1000 AS BIGINT))
-                        - MIN(UNIX_MICROS(timestamp) - CAST(duration_ms * 1000 AS BIGINT))
-                            OVER (PARTITION BY trace_id)
-                    )
-                AS DOUBLE) / 1000.0 AS start_offset_ms
-            FROM {FULL_TABLE}
-            WHERE trace_id        = '{tid}'
-              AND user_id         = '{uid}'
-              AND conversation_id = '{cid}'
-              {"AND timestamp >= CAST('" + fmt_ts(f_from) + "' AS TIMESTAMP)" if f_from else ""}
-              {"AND timestamp <= CAST('" + fmt_ts(f_to)   + "' AS TIMESTAMP)" if f_to   else ""}
-            ORDER BY start_offset_ms ASC
-        """)
-
-        if df.empty:
-            return (html.P("No events found.", style=dict(color="#6b7280", padding="40px",
-                                                          textAlign="center")),
-                    hidden, *blank, empty_bc)
-
-        df["start_offset_ms"] = pd.to_numeric(df["start_offset_ms"], errors="coerce").fillna(0)
-        df["duration_ms"]     = pd.to_numeric(df["duration_ms"],     errors="coerce").fillna(0)
-
-        fig      = build_gantt(df)
-        total_ms = (df["start_offset_ms"] + df["duration_ms"]).max()
-        slowest  = df.loc[df["duration_ms"].idxmax()]
-        n_comps  = df["component"].fillna("").nunique()
-
-        def fmt(ms):
-            return f"{ms/1000:.3f}s" if ms >= 1000 else f"{ms:.2f}ms"
-
-        bc = [
-            html.Span("👤", style=dict(marginRight="4px")),
-            html.Span(uid,  style=dict(color="#4a5568")),
-            html.Span(" → ", style=dict(color=DIM)),
-            html.Span("💬", style=dict(marginRight="4px")),
-            html.Span(cid,  style=dict(color="#4a5568")),
-            html.Span(" → ", style=dict(color=DIM)),
-            html.Span("🔍", style=dict(marginRight="4px")),
-            html.Span(
-                tid[:48] + ("…" if len(tid) > 48 else ""),
-                style=dict(color=ACCENT, fontWeight="700"),
-            ),
-        ]
-
-        chart = dcc.Graph(
-            figure=fig,
-            config=dict(
-                displayModeBar=True,
-                modeBarButtonsToRemove=["select2d", "lasso2d"],
-                displaylogo=False,
-                toImageButtonOptions=dict(format="png",
-                                          filename="trace_timeline", scale=2),
-            ),
-            style=dict(width="100%"),
-        )
-
-        return (
-            chart,
-            dict(display="flex", gap="12px", padding="14px 24px",
-                 flexWrap="wrap", borderBottom=f"1px solid {BORDER}",
-                 background=SURFACE2),
-            str(len(df)),
-            fmt(total_ms),
-            str(n_comps),
-            f"{slowest['component']} · {fmt(float(slowest['duration_ms']))}",
-            bc,
-        )
-
-    except Exception as e:
-        print(f"[render_timeline] {e}")
-        err = html.Div([
-            html.P("⚠ Error", style=dict(color="#ef4444", fontWeight="700",
-                                          marginBottom="8px")),
-            html.Pre(str(e), style=dict(color="#475569", fontSize="10px",
-                                        whiteSpace="pre-wrap")),
-        ], style=dict(padding="24px", fontFamily="JetBrains Mono, monospace"))
-        return err, hidden, *blank, empty_bc
+    return placeholder, hidden, *blank, html.Span("", style=dict(color=DIM))
 
 
 if __name__ == "__main__":
