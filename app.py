@@ -208,7 +208,7 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             ticks="outside",
             ticklen=4,
             tickcolor="#253352",
-            rangeslider=dict(visible=True, thickness=0.025, bgcolor="#080b14"),
+            rangeslider=dict(visible=False),
         ),
         yaxis=dict(
             type="linear",
