@@ -133,5 +133,9 @@ tr.summary-row:hover td {
 .js-plotly-plot .plotly,
 .js-plotly-plot .plotly .bg { background: transparent !important; }
 
+/* ── Refresh button ── */
+#btn-refresh:hover { border-color: #00d4ff70 !important; color: #00d4ff !important; }
+#btn-refresh:active { border-color: #00d4ff !important; color: #00d4ff !important; }
+
 /* ── Remove default focus outline ── */
 *:focus { outline: none; }

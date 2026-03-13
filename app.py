@@ -1,4 +1,5 @@
 import os
+import time
 import threading
 import pandas as pd
 import plotly.graph_objects as go
@@ -6,9 +7,10 @@ from dash import Dash, dcc, html, Input, Output, State, callback_context, ALL, M
 from databricks.sdk import WorkspaceClient
 import json
 
-# ── Server-side SQL cache ───────────────────────────────────────────────────────
-# Keyed by SQL result purpose — avoids browser JSON round-trips via dcc.Store.
-_cache: dict = {}
+# ── Server-side SQL cache (TTL-based) ──────────────────────────────────────────
+# Entries expire after CACHE_TTL seconds so the dashboard reflects table updates.
+CACHE_TTL   = 60          # seconds — tune as needed
+_cache: dict = {}         # key → (stored_at_epoch, value)
 _cache_lock = threading.Lock()
 
 # ── Databricks SDK ─────────────────────────────────────────────────────────────
@@ -24,14 +26,21 @@ FULL_TABLE = f"`{CATALOG}`.`{SCHEMA}`.`{TABLE}`"
 
 def _cache_get(key):
     with _cache_lock:
-        return _cache.get(key)
+        entry = _cache.get(key)
+    if entry is None:
+        return None
+    stored_at, value = entry
+    if time.time() - stored_at > CACHE_TTL:
+        with _cache_lock:
+            _cache.pop(key, None)
+        return None
+    return value
 
 def _cache_set(key, value):
     with _cache_lock:
-        _cache[key] = value
+        _cache[key] = (time.time(), value)
 
 def _cache_clear_prefix(prefix: str):
-    """Remove all keys that start with prefix."""
     with _cache_lock:
         for k in [k for k in _cache if k.startswith(prefix)]:
             del _cache[k]
@@ -97,49 +106,47 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
 
     total_ms = (df["start_offset_ms"] + df["duration_ms"]).max()
     n        = len(df)
-
-    # ── Build all shapes + hover data in ONE vectorised pass ──────────────────
-    shapes      = []
-    hover_x     = []
-    hover_y     = []
-    customdata  = []   # [color, component, operation, op_type, start_fmt, dur_fmt, end_fmt]
-
     min_w_floor = total_ms * 0.0008
 
-    for i, row in enumerate(df.itertuples(index=False)):
+    bases      = []
+    bar_widths = []
+    bar_heights= []
+    colors     = []
+    opacities  = []
+    customdata = []   # [color, component, operation, op_type, start_fmt, dur_fmt, end_fmt]
+
+    for row in df.itertuples(index=False):
         col      = get_color(row.component)
         is_root  = str(row.operation_type).upper() in ("REQUEST_END", "PREFILL_LATENCY")
-        bar_h    = 0.18 if is_root else 0.44
         opacity  = 0.40 if is_root else 1.0
+        bar_h    = 0.20 if is_root else 0.60
         dur_ms   = float(row.duration_ms)
         start_ms = float(row.start_offset_ms)
-        min_w    = max(dur_ms, min_w_floor)
 
-        # collect shape (batched below)
-        shapes.append(dict(
-            type="rect",
-            x0=start_ms,          x1=start_ms + min_w,
-            y0=i - bar_h / 2,     y1=i + bar_h / 2,
-            fillcolor=col,        opacity=opacity,
-            line=dict(color=col, width=1),
-            layer="above",
-        ))
-
-        dur_fmt   = f"{dur_ms/1000:.3f}s"   if dur_ms   >= 1000 else f"{dur_ms:.3f}ms"
+        dur_fmt   = f"{dur_ms/1000:.3f}s" if dur_ms >= 1000 else f"{dur_ms:.3f}ms"
         start_fmt = f"{start_ms:.3f}ms"
         end_fmt   = f"{start_ms + dur_ms:.3f}ms"
 
-        hover_x.append(start_ms + dur_ms / 2)
-        hover_y.append(i)
+        bases.append(start_ms)
+        bar_widths.append(max(dur_ms, min_w_floor))
+        bar_heights.append(bar_h)
+        colors.append(col)
+        opacities.append(opacity)
         customdata.append([col, row.component, row.operation,
                            str(row.operation_type), start_fmt, dur_fmt, end_fmt])
 
-    # ── Single scatter trace — replaces N individual traces ───────────────────
-    fig = go.Figure(go.Scatter(
-        x=hover_x,
-        y=hover_y,
-        mode="markers",
-        marker=dict(size=8, opacity=0),
+    # ── Single go.Bar trace — hover works across the full bar area ────────────
+    fig = go.Figure(go.Bar(
+        base=bases,
+        x=bar_widths,
+        y=list(range(n)),
+        width=bar_heights,
+        orientation="h",
+        marker=dict(
+            color=colors,
+            opacity=opacities,
+            line=dict(color=colors, width=1),
+        ),
         customdata=customdata,
         hovertemplate=(
             "<b style='color:%{customdata[0]};font-size:13px'>%{customdata[1]}</b>"
@@ -221,7 +228,7 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             font=dict(family="JetBrains Mono, monospace", size=11),
         ),
         dragmode="zoom",
-        shapes=shapes,
+        barmode="overlay",
     )
 
     return fig
@@ -428,6 +435,26 @@ app.layout = html.Div(
                     optionHeight=32,
                 ),
             ], style=dict(flex="1", minWidth="150px")),
+
+            # Refresh button
+            html.Button(
+                "⟳  Refresh",
+                id="btn-refresh",
+                n_clicks=0,
+                style=dict(
+                    background="transparent",
+                    border=f"1px solid {BORDER}",
+                    borderRadius="6px",
+                    color=MUTED,
+                    fontSize="11px",
+                    fontFamily="JetBrains Mono, monospace",
+                    padding="6px 14px",
+                    cursor="pointer",
+                    whiteSpace="nowrap",
+                    flexShrink="0",
+                    transition="border-color 0.15s, color 0.15s",
+                ),
+            ),
         ], style=dict(
             display="flex", alignItems="center", gap="14px",
             padding="10px 20px",
@@ -581,6 +608,17 @@ app.layout = html.Div(
 
 
 # ── CALLBACKS ──────────────────────────────────────────────────────────────────
+
+# 0. Refresh button — clears entire server-side cache so next render re-fetches
+@app.callback(
+    Output("store-expanded", "data", allow_duplicate=True),
+    Input("btn-refresh", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_refresh(n):
+    _cache_clear_all()
+    return {}   # also collapse the tree so it re-fetches user list fresh
+
 
 # 1. Cascading filter dropdowns
 #    - On load : populate all three with all distinct values
