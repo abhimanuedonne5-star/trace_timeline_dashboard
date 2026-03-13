@@ -1,9 +1,15 @@
 import os
+import threading
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, dcc, html, Input, Output, State, callback_context, ALL, MATCH, no_update
 from databricks.sdk import WorkspaceClient
 import json
+
+# ── Server-side SQL cache ───────────────────────────────────────────────────────
+# Keyed by SQL result purpose — avoids browser JSON round-trips via dcc.Store.
+_cache: dict = {}
+_cache_lock = threading.Lock()
 
 # ── Databricks SDK ─────────────────────────────────────────────────────────────
 w = WorkspaceClient()
@@ -14,6 +20,25 @@ TABLE        = os.environ.get("TABLE",        "trace_events")
 WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "2a6b5b84e8974695")
 
 FULL_TABLE = f"`{CATALOG}`.`{SCHEMA}`.`{TABLE}`"
+
+
+def _cache_get(key):
+    with _cache_lock:
+        return _cache.get(key)
+
+def _cache_set(key, value):
+    with _cache_lock:
+        _cache[key] = value
+
+def _cache_clear_prefix(prefix: str):
+    """Remove all keys that start with prefix."""
+    with _cache_lock:
+        for k in [k for k in _cache if k.startswith(prefix)]:
+            del _cache[k]
+
+def _cache_clear_all():
+    with _cache_lock:
+        _cache.clear()
 
 
 def fmt_ts(ts: str) -> str:
@@ -66,68 +91,82 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
     df["start_offset_ms"] = pd.to_numeric(df["start_offset_ms"], errors="coerce").fillna(0)
     df["duration_ms"]     = pd.to_numeric(df["duration_ms"],     errors="coerce").fillna(0)
     df = df.sort_values("start_offset_ms").reset_index(drop=True)
-    df["component"] = df["component"].fillna(df.get("source", "UNKNOWN")).fillna("UNKNOWN")
-    df["operation"] = df["operation"].fillna("")
+    df["component"]     = df["component"].fillna(df.get("source", "UNKNOWN")).fillna("UNKNOWN")
+    df["operation"]     = df["operation"].fillna("")
+    df["operation_type"]= df["operation_type"].fillna("") if "operation_type" in df.columns else ""
 
     total_ms = (df["start_offset_ms"] + df["duration_ms"]).max()
-    fig      = go.Figure()
-    seen     = set()
+    n        = len(df)
 
-    for i, row in df.iterrows():
-        col     = get_color(row["component"])
-        is_root = str(row.get("operation_type", "")).upper() in ("REQUEST_END", "PREFILL_LATENCY")
-        bar_h   = 0.18 if is_root else 0.44
-        opacity = 0.40 if is_root else 1.0
-        show_lg = row["component"] not in seen
-        seen.add(row["component"])
+    # ── Build all shapes + hover data in ONE vectorised pass ──────────────────
+    shapes      = []
+    hover_x     = []
+    hover_y     = []
+    customdata  = []   # [color, component, operation, op_type, start_fmt, dur_fmt, end_fmt]
 
-        dur_fmt   = f"{row['duration_ms']/1000:.3f}s" if row['duration_ms'] >= 1000 else f"{row['duration_ms']:.3f}ms"
-        start_fmt = f"{row['start_offset_ms']:.3f}ms"
-        end_fmt   = f"{row['start_offset_ms'] + row['duration_ms']:.3f}ms"
+    min_w_floor = total_ms * 0.0008
 
-        fig.add_trace(go.Scatter(
-            x=[row["start_offset_ms"] + row["duration_ms"] / 2],
-            y=[i],
-            mode="markers",
-            marker=dict(size=1, opacity=0, color=col),
-            name=row["component"],
-            legendgroup=row["component"],
-            showlegend=False,
-            hovertemplate=(
-                f"<b style='color:{col};font-size:13px'>{row['component']}</b>"
-                + (f"<br><span style='color:#a0b4cc;font-size:11px'>{row['operation']}</span>" if row['operation'] else "")
-                + f"<br><br><span style='color:#7b8fa8'>Start   </span><b style='color:#f0f4ff'>{start_fmt}</b>"
-                f"<br><span style='color:#7b8fa8'>Duration</span><b style='color:#f0f4ff'>{dur_fmt}</b>"
-                f"<br><span style='color:#7b8fa8'>End     </span><b style='color:#f0f4ff'>{end_fmt}</b>"
-                f"<br><span style='color:#7b8fa8'>Type    </span><span style='color:#c084fc'>{row.get('operation_type','')}</span>"
-                "<extra></extra>"
-            ),
+    for i, row in enumerate(df.itertuples(index=False)):
+        col      = get_color(row.component)
+        is_root  = str(row.operation_type).upper() in ("REQUEST_END", "PREFILL_LATENCY")
+        bar_h    = 0.18 if is_root else 0.44
+        opacity  = 0.40 if is_root else 1.0
+        dur_ms   = float(row.duration_ms)
+        start_ms = float(row.start_offset_ms)
+        min_w    = max(dur_ms, min_w_floor)
+
+        # collect shape (batched below)
+        shapes.append(dict(
+            type="rect",
+            x0=start_ms,          x1=start_ms + min_w,
+            y0=i - bar_h / 2,     y1=i + bar_h / 2,
+            fillcolor=col,        opacity=opacity,
+            line=dict(color=col, width=1),
+            layer="above",
         ))
 
-        min_w = max(row["duration_ms"], total_ms * 0.0008)
-        fig.add_shape(
-            type="rect",
-            x0=row["start_offset_ms"], x1=row["start_offset_ms"] + min_w,
-            y0=i - bar_h / 2,         y1=i + bar_h / 2,
-            fillcolor=col, opacity=opacity,
-            line=dict(color=col, width=1), layer="above",
-        )
+        dur_fmt   = f"{dur_ms/1000:.3f}s"   if dur_ms   >= 1000 else f"{dur_ms:.3f}ms"
+        start_fmt = f"{start_ms:.3f}ms"
+        end_fmt   = f"{start_ms + dur_ms:.3f}ms"
 
-    n  = len(df)
+        hover_x.append(start_ms + dur_ms / 2)
+        hover_y.append(i)
+        customdata.append([col, row.component, row.operation,
+                           str(row.operation_type), start_fmt, dur_fmt, end_fmt])
+
+    # ── Single scatter trace — replaces N individual traces ───────────────────
+    fig = go.Figure(go.Scatter(
+        x=hover_x,
+        y=hover_y,
+        mode="markers",
+        marker=dict(size=8, opacity=0),
+        customdata=customdata,
+        hovertemplate=(
+            "<b style='color:%{customdata[0]};font-size:13px'>%{customdata[1]}</b>"
+            "<br><span style='color:#a0b4cc;font-size:11px'>%{customdata[2]}</span>"
+            "<br><br><span style='color:#7b8fa8'>Start   </span>"
+            "<b style='color:#f0f4ff'>%{customdata[4]}</b>"
+            "<br><span style='color:#7b8fa8'>Duration</span>"
+            "<b style='color:#f0f4ff'>%{customdata[5]}</b>"
+            "<br><span style='color:#7b8fa8'>End     </span>"
+            "<b style='color:#f0f4ff'>%{customdata[6]}</b>"
+            "<br><span style='color:#7b8fa8'>Type    </span>"
+            "<span style='color:#c084fc'>%{customdata[3]}</span>"
+            "<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
     fh = max(560, n * 56 + 180)
 
-    # Two-line tick labels: component (bold) on line 1, operation (muted) on line 2
-    tick_labels = []
-    for _, row in df.iterrows():
-        comp = row["component"]
-        op   = row["operation"]
-        if op:
-            tick_labels.append(
-                f"<b style='color:#e8eeff'>{comp}</b>"
-                f"<br><span style='color:#7b8fa8;font-size:9px'>{op}</span>"
-            )
-        else:
-            tick_labels.append(f"<b style='color:#e8eeff'>{comp}</b>")
+    # Two-line tick labels (vectorised via list comprehension)
+    tick_labels = [
+        (f"<b style='color:#e8eeff'>{r.component}</b>"
+         f"<br><span style='color:#7b8fa8;font-size:9px'>{r.operation}</span>"
+         if r.operation
+         else f"<b style='color:#e8eeff'>{r.component}</b>")
+        for r in df.itertuples(index=False)
+    ]
 
     fig.update_layout(
         template="plotly_dark",
@@ -182,6 +221,7 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             font=dict(family="JetBrains Mono, monospace", size=11),
         ),
         dragmode="zoom",
+        shapes=shapes,
     )
 
     return fig
@@ -535,8 +575,7 @@ app.layout = html.Div(
 
         # Stores
         dcc.Store(id="store-active-trace", data={}),
-        dcc.Store(id="store-expanded",     data={}),
-        dcc.Store(id="store-tree-cache",   data={}),  # {key: list} — avoids re-querying
+        dcc.Store(id="store-expanded", data={}),
     ]
 )
 
@@ -583,35 +622,67 @@ def cascade_filters(_, f_user, f_conv, f_from, f_to):
     if f_to:   ts_parts.append(f"timestamp <= CAST('{fmt_ts(f_to)}'   AS TIMESTAMP)")
     ts_where = (" AND " + " AND ".join(ts_parts)) if ts_parts else ""
 
-    try:
-        # Users: unscoped (always show all)
-        u_df   = run_query(f"SELECT DISTINCT user_id FROM {FULL_TABLE} WHERE user_id IS NOT NULL{ts_where} ORDER BY user_id")
-        u_opts = [{"label": v, "value": v} for v in u_df["user_id"].tolist()]
+    # Build cache keys
+    u_ck = f"_cf_users|{ts_where}"
+    c_ck = f"_cf_convs|{f_user}|{ts_where}"
+    t_ck = f"_cf_traces|{f_user}|{f_conv}|{ts_where}"
 
-        # Conversations: scoped to selected user
-        c_where = f" AND user_id = '{f_user}'" if f_user else ""
-        c_df    = run_query(f"SELECT DISTINCT conversation_id FROM {FULL_TABLE} WHERE conversation_id IS NOT NULL{c_where}{ts_where} ORDER BY conversation_id")
-        c_opts  = [{"label": v, "value": v} for v in c_df["conversation_id"].tolist()]
+    u_opts = c_opts = t_opts = []
 
-        # Traces: scoped to selected user + conv
-        t_where = ""
-        if f_user: t_where += f" AND user_id = '{f_user}'"
-        if f_conv: t_where += f" AND conversation_id = '{f_conv}'"
-        t_df    = run_query(f"SELECT DISTINCT trace_id FROM {FULL_TABLE} WHERE trace_id IS NOT NULL{t_where}{ts_where} ORDER BY trace_id")
-        t_opts  = [{"label": v, "value": v} for v in t_df["trace_id"].tolist()]
+    def fetch_users():
+        nonlocal u_opts
+        v = _cache_get(u_ck)
+        if v is None:
+            try:
+                df = run_query(f"SELECT DISTINCT user_id FROM {FULL_TABLE} WHERE user_id IS NOT NULL{ts_where} ORDER BY user_id")
+                v = [{"label": x, "value": x} for x in df["user_id"].tolist()]
+                _cache_set(u_ck, v)
+            except Exception as e:
+                print(f"[cascade_filters/users] {e}")
+                v = []
+        u_opts = v
 
-        return u_opts, c_opts, t_opts, clear_conv, clear_trace
+    def fetch_convs():
+        nonlocal c_opts
+        v = _cache_get(c_ck)
+        if v is None:
+            try:
+                c_where = f" AND user_id = '{f_user}'" if f_user else ""
+                df = run_query(f"SELECT DISTINCT conversation_id FROM {FULL_TABLE} WHERE conversation_id IS NOT NULL{c_where}{ts_where} ORDER BY conversation_id")
+                v = [{"label": x, "value": x} for x in df["conversation_id"].tolist()]
+                _cache_set(c_ck, v)
+            except Exception as e:
+                print(f"[cascade_filters/convs] {e}")
+                v = []
+        c_opts = v
 
-    except Exception as e:
-        print(f"[cascade_filters] {e}")
-        return [], [], [], clear_conv, clear_trace
+    def fetch_traces():
+        nonlocal t_opts
+        v = _cache_get(t_ck)
+        if v is None:
+            try:
+                t_where = ""
+                if f_user: t_where += f" AND user_id = '{f_user}'"
+                if f_conv: t_where += f" AND conversation_id = '{f_conv}'"
+                df = run_query(f"SELECT DISTINCT trace_id FROM {FULL_TABLE} WHERE trace_id IS NOT NULL{t_where}{ts_where} ORDER BY trace_id")
+                v = [{"label": x, "value": x} for x in df["trace_id"].tolist()]
+                _cache_set(t_ck, v)
+            except Exception as e:
+                print(f"[cascade_filters/traces] {e}")
+                v = []
+        t_opts = v
+
+    threads = [threading.Thread(target=f) for f in (fetch_users, fetch_convs, fetch_traces)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    return u_opts, c_opts, t_opts, clear_conv, clear_trace
 
 
 # 2a. Manage expanded state — handles both filter resets and node toggles
 #     Separated from rendering so re-drawing the tree never eats a click.
 @app.callback(
-    Output("store-expanded",   "data"),
-    Output("store-tree-cache", "data"),
+    Output("store-expanded", "data"),
     Input("f-user",  "value"),
     Input("f-conv",  "value"),
     Input("f-trace", "value"),
@@ -619,26 +690,27 @@ def cascade_filters(_, f_user, f_conv, f_from, f_to):
     Input("f-to",    "value"),
     Input({"type": "user-row", "id": ALL}, "n_clicks"),
     Input({"type": "conv-row", "id": ALL}, "n_clicks"),
-    State("store-expanded",   "data"),
-    State("store-tree-cache", "data"),
+    State("store-expanded", "data"),
     prevent_initial_call=False,
 )
 def manage_expanded(f_user, f_conv, f_trace, f_from, f_to,
-                    user_clicks, conv_clicks,
-                    expanded, cache):
+                    user_clicks, conv_clicks, expanded):
     ctx      = callback_context
     expanded = expanded or {}
-    cache    = cache    or {}
 
     triggered_props = [t["prop_id"] for t in ctx.triggered] if ctx.triggered else []
     filter_changed  = any(p.startswith("f-") for p in triggered_props)
 
     if filter_changed:
-        cache    = {}
+        # Clear server-side caches so next render re-fetches with new filters
+        _cache_clear_prefix("_tree_")
+        # Also clear cascade filter cache if time window changed
+        if any("f-from" in p or "f-to" in p for p in triggered_props):
+            _cache_clear_prefix("_cf_")
         expanded = {}
         if f_user:
             expanded[f_user] = True
-        return expanded, cache
+        return expanded
 
     # Toggle the clicked node only
     for t in ctx.triggered:
@@ -647,24 +719,23 @@ def manage_expanded(f_user, f_conv, f_trace, f_from, f_to,
             key = json.loads(pid.split(".")[0])["id"]
             expanded[key] = not expanded.get(key, False)
 
-    return expanded, cache
+    return expanded
 
 
 # 2b. Render tree from expanded state + filters — pure rendering, no state writes
+#     Uses server-side _cache dict (no dcc.Store round-trip overhead).
 @app.callback(
     Output("tree-root", "children"),
-    Input("store-expanded",   "data"),
+    Input("store-expanded", "data"),
     State("f-user",  "value"),
     State("f-conv",  "value"),
     State("f-trace", "value"),
     State("f-from",  "value"),
     State("f-to",    "value"),
-    State("store-tree-cache", "data"),
     prevent_initial_call=False,
 )
-def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to, cache):
+def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to):
     expanded = expanded or {}
-    cache    = cache    or {}
 
     where_parts = ["1=1"]
     if f_user:  where_parts.append(f"user_id = '{f_user}'")
@@ -674,15 +745,17 @@ def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to, cache):
     if f_to:    where_parts.append(f"timestamp <= CAST('{fmt_ts(f_to)}' AS TIMESTAMP)")
     where = " AND ".join(where_parts)
 
-    # ── Fetch users (use cache populated by manage_expanded) ─────────────────
-    u_key = f"users|{where}"
-    if u_key not in cache:
+    # ── Fetch users ────────────────────────────────────────────────────────────
+    u_key = f"_tree_users|{where}"
+    users = _cache_get(u_key)
+    if users is None:
         try:
             df = run_query(f"""
                 SELECT DISTINCT user_id FROM {FULL_TABLE}
                 WHERE {where} AND user_id IS NOT NULL ORDER BY user_id
             """)
-            cache[u_key] = df["user_id"].tolist()
+            users = df["user_id"].tolist()
+            _cache_set(u_key, users)
         except Exception as e:
             print(f"[render_tree/users] {e}")
             return [html.P(str(e), style=dict(color="#ef4444", fontSize="10px",
@@ -690,13 +763,14 @@ def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to, cache):
                                               fontFamily="JetBrains Mono, monospace"))]
 
     tree = []
-    for uid in cache[u_key]:
+    for uid in users:
         u_exp      = expanded.get(uid, False)
         u_children = []
 
         if u_exp:
-            c_key = f"convs|{uid}|{where}"
-            if c_key not in cache:
+            c_key = f"_tree_convs|{uid}|{where}"
+            convs = _cache_get(c_key)
+            if convs is None:
                 try:
                     df = run_query(f"""
                         SELECT DISTINCT conversation_id FROM {FULL_TABLE}
@@ -704,19 +778,21 @@ def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to, cache):
                           AND conversation_id IS NOT NULL AND {where}
                         ORDER BY conversation_id
                     """)
-                    cache[c_key] = df["conversation_id"].tolist()
+                    convs = df["conversation_id"].tolist()
+                    _cache_set(c_key, convs)
                 except Exception as e:
                     print(f"[render_tree/convs] {e}")
-                    cache[c_key] = []
+                    convs = []
 
-            for cid in cache[c_key]:
+            for cid in convs:
                 ck    = f"{uid}||{cid}"
                 c_exp = expanded.get(ck, False)
                 c_children = []
 
                 if c_exp:
-                    t_key = f"traces|{uid}|{cid}|{where}"
-                    if t_key not in cache:
+                    t_key = f"_tree_traces|{uid}|{cid}|{where}"
+                    traces = _cache_get(t_key)
+                    if traces is None:
                         try:
                             df = run_query(f"""
                                 SELECT trace_id,
@@ -729,12 +805,13 @@ def render_tree(expanded, f_user, f_conv, f_trace, f_from, f_to, cache):
                                 GROUP BY trace_id
                                 ORDER BY MIN(timestamp) ASC
                             """)
-                            cache[t_key] = df.to_dict("records")
+                            traces = df.to_dict("records")
+                            _cache_set(t_key, traces)
                         except Exception as e:
                             print(f"[render_tree/traces] {e}")
-                            cache[t_key] = []
+                            traces = []
 
-                    for tr in cache[t_key]:
+                    for tr in traces:
                         c_children.append(
                             trace_node(uid, cid, tr["trace_id"],
                                        tr["event_count"], tr["total_ms"])
