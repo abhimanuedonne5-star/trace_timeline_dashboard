@@ -37,10 +37,10 @@ def run_query(sql: str) -> pd.DataFrame:
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 PALETTE = [
-    "#00d4ff","#a78bfa","#34d399","#fbbf24","#f87171",
-    "#f472b6","#60a5fa","#2dd4bf","#fb923c","#c084fc",
-    "#22d3ee","#a3e635","#ff6b6b","#4ade80","#e879f9",
-    "#38bdf8","#facc15","#86efac","#fda4af","#818cf8",
+    "#00e5ff","#bf7fff","#00ff9f","#ffe033","#ff5c5c",
+    "#ff4db8","#4db8ff","#00ffea","#ff7a1a","#d966ff",
+    "#00ccff","#ccff00","#ff4040","#33ff77","#ff33ff",
+    "#33bbff","#ffdd00","#66ff99","#ff6680","#7777ff",
 ]
 _cc = {}
 _ci = [0]
@@ -76,8 +76,8 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
     for i, row in df.iterrows():
         col     = get_color(row["component"])
         is_root = str(row.get("operation_type", "")).upper() in ("REQUEST_END", "PREFILL_LATENCY")
-        bar_h   = 0.18 if is_root else 0.42
-        opacity = 0.22 if is_root else 0.85
+        bar_h   = 0.18 if is_root else 0.44
+        opacity = 0.40 if is_root else 1.0
         show_lg = row["component"] not in seen
         seen.add(row["component"])
 
@@ -173,7 +173,7 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             autorange="reversed",
             automargin=True,
             ticks="outside",
-            ticklen=10,
+            ticklen=20,
             tickwidth=1,
             tickcolor="#253352",
         ),
