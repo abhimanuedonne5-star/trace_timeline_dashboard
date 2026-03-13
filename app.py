@@ -56,10 +56,10 @@ def get_color(comp: str) -> str:
 def build_gantt(df: pd.DataFrame) -> go.Figure:
     if df.empty:
         fig = go.Figure()
-        fig.update_layout(paper_bgcolor="#05060f", plot_bgcolor="#05060f",
-                          font=dict(color="#374151"),
+        fig.update_layout(paper_bgcolor="#080b14", plot_bgcolor="#080b14",
+                          font=dict(color="#7b8fa8"),
                           annotations=[dict(text="No data", x=0.5, y=0.5,
-                                           showarrow=False, font=dict(color="#374151", size=14))])
+                                           showarrow=False, font=dict(color="#7b8fa8", size=14))])
         return fig
 
     df = df.copy()
@@ -95,11 +95,11 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             showlegend=False,
             hovertemplate=(
                 f"<b style='color:{col};font-size:13px'>{row['component']}</b>"
-                + (f"<br><span style='color:#6b7280;font-size:11px'>{row['operation']}</span>" if row['operation'] else "")
-                + f"<br><br><span style='color:#64748b'>Start   </span><b>{start_fmt}</b>"
-                f"<br><span style='color:#64748b'>Duration</span><b>{dur_fmt}</b>"
-                f"<br><span style='color:#64748b'>End     </span><b>{end_fmt}</b>"
-                f"<br><span style='color:#64748b'>Type    </span><span style='color:#94a3b8'>{row.get('operation_type','')}</span>"
+                + (f"<br><span style='color:#a0b4cc;font-size:11px'>{row['operation']}</span>" if row['operation'] else "")
+                + f"<br><br><span style='color:#7b8fa8'>Start   </span><b style='color:#f0f4ff'>{start_fmt}</b>"
+                f"<br><span style='color:#7b8fa8'>Duration</span><b style='color:#f0f4ff'>{dur_fmt}</b>"
+                f"<br><span style='color:#7b8fa8'>End     </span><b style='color:#f0f4ff'>{end_fmt}</b>"
+                f"<br><span style='color:#7b8fa8'>Type    </span><span style='color:#c084fc'>{row.get('operation_type','')}</span>"
                 "<extra></extra>"
             ),
         ))
@@ -123,62 +123,62 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
         op   = row["operation"]
         if op:
             tick_labels.append(
-                f"<b style='color:#cbd5e1'>{comp}</b>"
-                f"<br><span style='color:#334155;font-size:9px'>{op}</span>"
+                f"<b style='color:#e8eeff'>{comp}</b>"
+                f"<br><span style='color:#7b8fa8;font-size:9px'>{op}</span>"
             )
         else:
-            tick_labels.append(f"<b style='color:#cbd5e1'>{comp}</b>")
+            tick_labels.append(f"<b style='color:#e8eeff'>{comp}</b>")
 
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor="#05060f",
-        plot_bgcolor="#0b0d1a",
+        paper_bgcolor="#080b14",
+        plot_bgcolor="#0e1220",
         height=fh,
         margin=dict(l=8, r=24, t=44, b=52),
-        font=dict(family="JetBrains Mono, monospace", size=11, color="#e2e8f0"),
+        font=dict(family="JetBrains Mono, monospace", size=11, color="#f0f4ff"),
         title=dict(
             text=(
-                f"<span style='color:#1e3a5f'>Timeline</span>"
-                f"  <span style='color:#0f2030'>|</span>"
+                f"<span style='color:#7b8fa8'>Timeline</span>"
+                f"  <span style='color:#253352'>|</span>"
                 f"  <span style='color:#00d4ff;font-weight:700'>{n} events</span>"
-                f"  <span style='color:#0f2030'>|</span>"
-                f"  <span style='color:#334155'>{total_ms:.2f} ms total</span>"
+                f"  <span style='color:#253352'>|</span>"
+                f"  <span style='color:#a0b4cc'>{total_ms:.2f} ms total</span>"
             ),
             font=dict(size=12), x=0, xref="paper",
         ),
         showlegend=False,
         xaxis=dict(
             title=dict(text="Offset from first event (ms)",
-                       font=dict(size=10, color="#475569")),
-            gridcolor="#111827", zeroline=True,
-            zerolinecolor="#1e3a5f", zerolinewidth=1,
-            tickfont=dict(size=10, color="#64748b"),
+                       font=dict(size=10, color="#7b8fa8")),
+            gridcolor="#1a2540", zeroline=True,
+            zerolinecolor="#2a3f5f", zerolinewidth=1,
+            tickfont=dict(size=10, color="#8ba0bc"),
             tickformat=".2f",
             ticksuffix=" ms",
             nticks=12,
             showgrid=True,
             showline=True,
-            linecolor="#1a2035",
+            linecolor="#253352",
             ticks="outside",
             ticklen=4,
-            tickcolor="#1a2035",
-            rangeslider=dict(visible=True, thickness=0.025, bgcolor="#07080f"),
+            tickcolor="#253352",
+            rangeslider=dict(visible=True, thickness=0.025, bgcolor="#080b14"),
         ),
         yaxis=dict(
             tickmode="array",
             tickvals=list(range(n)),
             ticktext=tick_labels,
-            tickfont=dict(size=11, color="#94a3b8"),
-            gridcolor="#0d1020",
+            tickfont=dict(size=11, color="#c8d8ec"),
+            gridcolor="#121b2e",
             autorange="reversed",
             automargin=True,
             ticks="outside",
             ticklen=10,
             tickwidth=1,
-            tickcolor="#1a2035",
+            tickcolor="#253352",
         ),
         hoverlabel=dict(
-            bgcolor="#0a0c18", bordercolor="#1e293b",
+            bgcolor="#0e1220", bordercolor="#253352",
             font=dict(family="JetBrains Mono, monospace", size=11),
         ),
         dragmode="zoom",
@@ -191,16 +191,16 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
 app = Dash(__name__, title="Trace Timeline", suppress_callback_exceptions=True)
 
 # ── Design tokens ──────────────────────────────────────────────────────────────
-BG      = "#05060f"
-SURFACE = "#0b0d1a"
-SURFACE2= "#0f1120"
-BORDER  = "#1a2035"
-TEXT    = "#e2e8f0"
-MUTED   = "#475569"
-DIM     = "#1e3a5f"
-ACCENT  = "#00d4ff"
-PURPLE  = "#a78bfa"
-GREEN   = "#34d399"
+BG      = "#080b14"   # page background
+SURFACE = "#0e1220"   # sidebar / top bar
+SURFACE2= "#131829"   # cards, filter inputs, stat row
+BORDER  = "#1f2d45"   # all borders — visible but not harsh
+TEXT    = "#f0f4ff"   # primary text — near-white with a cool tint
+MUTED   = "#7b8fa8"   # secondary labels — clearly readable
+DIM     = "#3d5a7a"   # placeholder / hint text — visible but de-emphasised
+ACCENT  = "#00d4ff"   # cyan — primary interactive colour
+PURPLE  = "#c084fc"   # brighter purple for conversations
+GREEN   = "#4ade80"   # brighter green for traces / positive values
 
 LABEL_S = dict(
     fontSize="9px", fontFamily="JetBrains Mono, monospace",
@@ -253,7 +253,7 @@ def user_node(uid, expanded=False):
                                      minWidth="10px", transition="transform .15s")),
                 html.Span("👤", style=dict(fontSize="13px")),
                 html.Span(uid, style=dict(
-                    fontSize="12px", fontWeight="700", color="#cbd5e1",
+                    fontSize="12px", fontWeight="700", color="#e8eeff",
                     fontFamily="JetBrains Mono, monospace",
                     overflow="hidden", textOverflow="ellipsis", whiteSpace="nowrap",
                 )),
@@ -282,7 +282,7 @@ def conv_node(uid, cid, expanded=False):
                           style=dict(color=PURPLE, fontSize="8px", minWidth="10px")),
                 html.Span("💬", style=dict(fontSize="11px")),
                 html.Span(cid, style=dict(
-                    fontSize="11px", fontWeight="600", color="#7c8db5",
+                    fontSize="11px", fontWeight="600", color="#c084fc",
                     fontFamily="JetBrains Mono, monospace",
                     overflow="hidden", textOverflow="ellipsis", whiteSpace="nowrap",
                 )),
@@ -315,13 +315,13 @@ def trace_node(uid, cid, tid, event_count=None, total_ms=None):
                 html.Span(
                     tid[:36] + ("…" if len(tid) > 36 else ""),
                     style=dict(
-                        fontSize="10px", fontWeight="600", color="#4a5568",
+                        fontSize="10px", fontWeight="600", color="#7ec8a0",
                         fontFamily="JetBrains Mono, monospace",
                         display="block", lineHeight="1.4",
                     ),
                 ),
                 html.Span(label_extra, style=dict(
-                    fontSize="9px", color="#2d3f5a",
+                    fontSize="9px", color="#5a8a6a",
                     fontFamily="JetBrains Mono, monospace",
                 )),
             ]),
@@ -821,7 +821,7 @@ def summary_table_row(cells, header=False):
         fontSize="9px" if header else "11px",
         fontFamily="JetBrains Mono, monospace",
         borderBottom=f"1px solid {BORDER}",
-        color=MUTED if header else "#94a3b8",
+        color="#8ba0bc" if header else "#c8d8ec",
         fontWeight="600" if header else "400",
         letterSpacing="1px" if header else "0",
         textTransform="uppercase" if header else "none",
@@ -895,10 +895,10 @@ def render_main(active, f_user, f_conv, f_from, f_to):
             n_comps  = df["component"].fillna("").nunique()
             bc = [
                 html.Span("👤", style=dict(marginRight="4px")),
-                html.Span(uid, style=dict(color="#4a5568")),
+                html.Span(uid, style=dict(color="#8ba0bc")),
                 html.Span(" → ", style=dict(color=DIM)),
                 html.Span("💬", style=dict(marginRight="4px")),
-                html.Span(cid, style=dict(color="#4a5568")),
+                html.Span(cid, style=dict(color="#8ba0bc")),
                 html.Span(" → ", style=dict(color=DIM)),
                 html.Span("🔍", style=dict(marginRight="4px")),
                 html.Span(tid[:48] + ("…" if len(tid) > 48 else ""),
@@ -921,7 +921,7 @@ def render_main(active, f_user, f_conv, f_from, f_to):
         except Exception as e:
             print(f"[render/trace] {e}")
             return (html.Div([html.P("⚠ Error", style=dict(color="#ef4444", fontWeight="700")),
-                              html.Pre(str(e), style=dict(color="#475569", fontSize="10px",
+                              html.Pre(str(e), style=dict(color="#7b8fa8", fontSize="10px",
                                                           whiteSpace="pre-wrap"))],
                              style=dict(padding="24px", fontFamily="JetBrains Mono, monospace")),
                     hidden, *blank, html.Span("Error", style=dict(color="#ef4444")))
@@ -943,7 +943,7 @@ def render_main(active, f_user, f_conv, f_from, f_to):
             """)
             bc = [
                 html.Span("👤", style=dict(marginRight="4px")),
-                html.Span(f_user, style=dict(color="#4a5568")),
+                html.Span(f_user, style=dict(color="#8ba0bc")),
                 html.Span(" → ", style=dict(color=DIM)),
                 html.Span("💬", style=dict(marginRight="4px")),
                 html.Span(f_conv, style=dict(color=PURPLE, fontWeight="700")),
