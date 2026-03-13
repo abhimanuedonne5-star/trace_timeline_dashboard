@@ -211,12 +211,13 @@ def build_gantt(df: pd.DataFrame) -> go.Figure:
             rangeslider=dict(visible=True, thickness=0.025, bgcolor="#080b14"),
         ),
         yaxis=dict(
+            type="linear",
+            range=[n - 0.5, -0.5],   # reversed, tightly clipped to rows
             tickmode="array",
             tickvals=list(range(n)),
             ticktext=tick_labels,
             tickfont=dict(size=11, color="#c8d8ec"),
             gridcolor="#121b2e",
-            autorange="reversed",
             automargin=True,
             ticks="outside",
             ticklen=20,
